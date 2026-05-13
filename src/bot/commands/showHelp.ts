@@ -1,22 +1,18 @@
 import { Context } from 'telegraf';
 
 export async function showHelp(ctx: Context): Promise<void> {
-  const helpMessage = `📋 *Comandos disponibles*
-
-/start — Menú principal
-/swap — Iniciar un intercambio
-/rates — Ver tasas actuales
-/raffle — Información del sorteo
-/help — Esta ayuda
-
-*¿Cómo funciona?*
-1\\. Selecciona /swap
-2\\. Elige dirección \\(USDT→BTC, BTC→USDT, etc\\.\\)
-3\\. Ingresa el monto
-4\\. Revisa las comisiones
-5\\. Confirma y el bot hace el resto
-
-*Soporte:* @admin`;
+  const helpMessage = 'SwapBot — Comandos\n\n' +
+    '/start — Menu principal\n' +
+    '/swap — Iniciar un intercambio\n' +
+    '/calc — Calculadora: cuanto recibes\n' +
+    '/raffle — Informacion del sorteo\n' +
+    '/help — Esta ayuda\n\n' +
+    'Como funciona?\n' +
+    '1. Usa /calc para ver cuanto recibes\n' +
+    '2. Usa /swap para hacer el intercambio\n' +
+    '3. Pega tu invoice de Lightning\n' +
+    '4. Confirma y listo\n\n' +
+    'Soporte: @admin';
 
   await ctx.reply(helpMessage);
 }

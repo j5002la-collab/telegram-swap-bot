@@ -6,7 +6,7 @@ import { userMiddleware } from './middleware/user';
 import { startCommand, handleStartCallback } from './commands/start';
 import { helpCommand } from './commands/help';
 import { swapCommand, handleSwapDirection, handleSwapAmount, handleSwapConfirm } from './commands/swap';
-import { ratesCommand, handleRefreshRates } from './commands/rates';
+import { calcCommand, handleCalcText } from './commands/calc';
 import { raffleCommand, handleRaffleWinners } from './commands/raffle';
 import { adminCommand, handleAdminForceRaffle } from './commands/admin';
 import { rateLimitMiddleware } from './middleware/rate-limit';
@@ -24,20 +24,20 @@ export function createBot(): Telegraf<Context> {
   bot.start(startCommand);
   bot.help(helpCommand);
   bot.command('swap', swapCommand);
-  bot.command('rates', ratesCommand);
+  bot.command('calc', calcCommand);
   bot.command('raffle', raffleCommand);
   bot.command('admin', adminCommand);
 
-  // Callback handlers — specific patterns first, then general
+  // Callback handlers
   bot.action(/^swap_dir_/, handleSwapDirection);
   bot.action(/^swap_confirm$|^swap_cancel$/, handleSwapConfirm);
-  bot.action('refresh_rates', handleRefreshRates);
   bot.action('raffle_winners', handleRaffleWinners);
   bot.action('admin_force_raffle', handleAdminForceRaffle);
-  bot.action(/^(start_swap|show_rates|show_raffle|show_help)$/, handleStartCallback);
+  bot.action(/^(start_swap|show_calc|show_raffle|show_help)$/, handleStartCallback);
 
-  // Text handler for swap amount input
+  // Text handler for swap amount + calc input
   bot.on('text', handleSwapAmount);
+  bot.on('text', handleCalcText);
 
   // Error handler
   bot.catch((err: unknown, ctx: Context) => {
@@ -55,7 +55,6 @@ export async function launchBot(bot: Telegraf<Context>): Promise<void> {
     await bot.launch();
     logger.info('Bot launched successfully');
 
-    // Enable graceful stop
     const gracefulShutdown = async () => {
       logger.info('Shutting down gracefully...');
       bot.stop();
