@@ -1,6 +1,7 @@
 import { Context, Markup } from 'telegraf';
 import { rateEngine, RateInfo } from '../../engine/rates';
 import { commissionEngine, FeeBreakdown } from '../../engine/commission';
+import { raffleEngine } from '../../engine/raffle';
 import { getUserState } from '../middleware/user';
 import { logger } from '../../utils/logger';
 import { Swap, SwapDirection } from '../../models';
@@ -257,6 +258,12 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
     });
 
     logger.info('Swap completed', { swapId, dbId: swap._id });
+
+    // Track raffle volume (convert to sats if USDT/USDC: 1 cent ≈ rough BTC equivalent)
+    const volumeInSats = session.sourceAmount as number;
+    raffleEngine.trackSwapVolume(userState?.userId || 'unknown', volumeInSats).catch((err) => {
+      logger.error('Raffle tracking failed', { error: err });
+    });
 
     const successMsg =
       `✅ *¡Swap completado\\!*\n\n` +

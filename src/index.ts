@@ -2,6 +2,7 @@ import { config } from './utils/config';
 import { logger } from './utils/logger';
 import { connectDatabase } from './models';
 import { createBot, launchBot } from './bot/bot';
+import { startRaffleScheduler } from './jobs/raffle-draw';
 
 async function main(): Promise<void> {
   logger.info('Starting Telegram Swap Bot...', {
@@ -13,6 +14,9 @@ async function main(): Promise<void> {
   try {
     // Connect to MongoDB
     await connectDatabase();
+
+    // Start raffle scheduler (Sundays 23:59 UTC)
+    startRaffleScheduler();
 
     // Create and launch bot
     const bot = createBot();
