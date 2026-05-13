@@ -253,7 +253,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
         '`' + res.invoice + '`\n\n' +
         'Monto: ' + s.sourceAmount.toLocaleString() + ' sats\n\n' +
         'Cuando pagues, Boltz lockeara BTC en la chain.\n' +
-        'Usa https://boltz.exchange/refund/ para reclamar tus BTC.',
+        'Para reclamar tus BTC usa:\nhttps://boltz.exchange/rescue\n\n(Necesitas la invoice LN que pagaste y el preimage que generamos).',
       );
     } else {
       // --- SUBMARINE SWAP: On-chain → Lightning (docs: user provides invoice FIRST) ---
@@ -321,16 +321,16 @@ async function updateSwapMessage(
     'invoice.paid': 'Invoice pagada! Boltz reclama los fondos...',
     'transaction.claim.pending': 'Boltz reclamando. Swap casi listo.',
     'transaction.claimed': 'Swap completado!',
-    'invoice.failedToPay': 'Error: Boltz no pudo pagar la invoice.\nTus fondos seran reembolsados.\nUsa https://boltz.exchange/refund/ para recuperar.',
-    'transaction.lockupFailed': 'Error en el deposito. Monto incorrecto.\nUsa https://boltz.exchange/refund/ para recuperar.',
+    'invoice.failedToPay': 'Error: Boltz no pudo pagar la invoice.\nTus fondos seran reembolsados.\n\nRecupera tus fondos:\nhttps://boltz.exchange/refund/',
+    'transaction.lockupFailed': 'Error en el deposito. Monto incorrecto.\n\nRecupera tus fondos:\nhttps://boltz.exchange/refund/',
     // Reverse states
     'minerfee.paid': 'Miner fee pagado.',
     'invoice.settled': 'Swap completado! Recibiras BTC en la chain.',
     'invoice.expired': 'Invoice expiro. Reintenta con /swap.',
     'transaction.failed': 'Error en el swap. Fondos reembolsados automaticamente.',
-    'transaction.refunded': 'Fondos reembolsados.',
+    'transaction.refunded': 'Fondos reembolsados automaticamente.',
     // Common
-    'swap.expired': 'Swap expirado. Si enviaste fondos, usa https://boltz.exchange/refund/ para recuperarlos.',
+    'swap.expired': 'Swap expirado. Si enviaste fondos:\n\nRecuperar: https://boltz.exchange/refund/\nRescate: https://boltz.exchange/rescue',
   };
 
   const msg = labels[status] || ('Estado Boltz: ' + status);
