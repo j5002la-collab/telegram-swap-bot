@@ -141,10 +141,11 @@ export class CommissionEngine {
 
   /**
    * Set commission rate at runtime (admin command).
+   * Admin-adjustable range: 1.5% to 2.5%.
    */
   setCommissionRate(rate: number): void {
-    if (rate < 0 || rate > 10) {
-      throw new Error('Commission rate must be between 0% and 10%');
+    if (rate < 1.5 || rate > 2.5) {
+      throw new Error('Commission rate must be between 1.5% and 2.5%');
     }
     this.commissionRate = rate;
     logger.info('Commission rate changed', { newRate: rate });

@@ -1,11 +1,13 @@
 import { Context, Markup } from 'telegraf';
 import { getUserState } from '../middleware/user';
 import { showHelp } from './showHelp';
+import { commissionEngine } from '../../engine/commission';
 
 export async function startCommand(ctx: Context): Promise<void> {
   const firstName = ctx.from?.first_name || 'User';
   const userState = getUserState(ctx);
   const username = userState?.username || firstName;
+  const rate = commissionEngine.getCommissionRate();
 
   const welcomeMessage = `🤖 ¡Bienvenido\\, ${username}!
 
@@ -13,7 +15,7 @@ Soy SwapBot, tu intermediario para intercambios instantáneos de USDT/USDC ↔ B
 
 📍 *No\\-custodial* — Nunca retengo tus fondos
 ⚡ *Instantáneo* — Swaps en 1\\-5 minutos
-💸 *Comisión transparente* — 2\\.5%
+💸 *Comisión* — ${rate}% \\(configurable 1\\.5% \\- 2\\.5%\\)
 🎁 *Sorteo semanal* — 0\\.1% del volumen
 
 Selecciona una opción para empezar:`;
