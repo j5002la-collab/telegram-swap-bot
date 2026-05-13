@@ -1,0 +1,52 @@
+{
+  "name": "telegram-swap-bot",
+  "version": "0.1.0",
+  "description": "Telegram bot for instant USDT/USDC ↔ BTC/Lightning swaps via Boltz API",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "lint": "eslint src/ --ext .ts",
+    "format": "prettier --write 'src/**/*.ts'",
+    "pretest": "tsc -p tsconfig.test.json",
+    "test": "mocha --exit 'dist/tests/**/*.spec.js'"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "boltz",
+    "lightning",
+    "bitcoin",
+    "swap",
+    "usdt"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.15.0",
+    "dotenv": "^16.0.0",
+    "mongoose": "^8.17.1",
+    "node-schedule": "^2.1.0",
+    "telegraf": "^4.8.0",
+    "winston": "^3.17.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/chai": "^5.0.0",
+    "@types/mocha": "^10.0.0",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "chai": "^5.0.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "mocha": "^11.0.0",
+    "prettier": "^3.4.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.7.0"
+  }
+}
