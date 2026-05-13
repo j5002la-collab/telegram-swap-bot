@@ -372,6 +372,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
         });
       }
       setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId!), 30 * 60 * 1000);
+      clearSs(ctx);
 
     } catch (error) {
       logger.error('Swap creation failed', { error, swapId });
