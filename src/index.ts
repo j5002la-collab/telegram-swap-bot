@@ -1,10 +1,10 @@
-import { config } from './utils/config';
+import { config, validateConfig } from './utils/config';
 import { logger } from './utils/logger';
 import { connectDatabase } from './models';
 import { createBot, launchBot } from './bot/bot';
 import { startRaffleScheduler } from './jobs/raffle-draw';
 import { treasuryEngine } from './engine/treasury';
-import { validateConfig } from './utils/config';
+import { BoltzWebSocket } from './boltz/websocket';
 
 async function main(): Promise<void> {
   logger.info('Starting Telegram Swap Bot...', {
@@ -29,8 +29,14 @@ async function main(): Promise<void> {
     // Start raffle scheduler (Sundays 23:59 UTC)
     startRaffleScheduler();
 
+    // Connect to Boltz WebSocket (for real-time swap monitoring)
+    const wsUrl = config.boltzApiUrl.replace('https://', 'wss://').replace('http://', 'ws://') + '/v2/ws';
+    const boltzWs = new BoltzWebSocket(wsUrl);
+    await boltzWs.connect();
+    logger.info('Boltz WebSocket connected');
+
     // Create and launch bot
-    const bot = createBot();
+    const bot = createBot(boltzWs);
     await launchBot(bot);
 
     logger.info('Telegram Swap Bot is running');
@@ -40,7 +46,6 @@ async function main(): Promise<void> {
   }
 }
 
-// Handle unhandled rejections
 process.on('unhandledRejection', (reason) => {
   logger.error('Unhandled rejection', { error: reason });
 });
