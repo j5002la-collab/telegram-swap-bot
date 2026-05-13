@@ -8,7 +8,7 @@ export type SwapDirection =
   | 'LN2ONCHAIN'
   | 'ONCHAIN2LN';
 
-export type ChainNetwork = 'TRC-20' | 'ERC-20' | 'BEP-20' | 'ARBITRUM' | 'BTC' | 'LIGHTNING';
+export type ChainNetwork = 'TRC-20' | 'ERC-20' | 'BEP-20' | 'ARBITRUM' | 'SOLANA' | 'POLYGON' | 'OPTIMISM' | 'AVALANCHE' | 'BASE' | 'BTC' | 'LIGHTNING';
 
 export type SwapCurrency = 'BTC' | 'USDT' | 'USDC';
 
@@ -59,11 +59,11 @@ const swapSchema = new Schema<ISwap>(
     },
     sourceChain: {
       type: String,
-      enum: ['TRC-20', 'ERC-20', 'BEP-20', 'ARBITRUM', 'BTC', 'LIGHTNING'],
+      enum: ['TRC-20', 'ERC-20', 'BEP-20', 'ARBITRUM', 'SOLANA', 'POLYGON', 'OPTIMISM', 'AVALANCHE', 'BASE', 'BTC', 'LIGHTNING'],
     },
     destChain: {
       type: String,
-      enum: ['TRC-20', 'ERC-20', 'BEP-20', 'ARBITRUM', 'BTC', 'LIGHTNING'],
+      enum: ['TRC-20', 'ERC-20', 'BEP-20', 'ARBITRUM', 'SOLANA', 'POLYGON', 'OPTIMISM', 'AVALANCHE', 'BASE', 'BTC', 'LIGHTNING'],
     },
     sourceAmount: {
       type: Number,

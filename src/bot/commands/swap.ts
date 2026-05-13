@@ -90,19 +90,29 @@ export async function handleSwapCurrency(ctx: Context): Promise<void> {
 
 // --- Network menu for USDT/USDC ---
 async function showNetworkMenu(ctx: Context, currency: string): Promise<void> {
-  const nets = currency === 'USDT'
+  const allNets = currency === 'USDT'
     ? [
         { label: 'TRC-20 (Tron)', net: 'TRC-20' as ChainNetwork, fee: '~$0.10' },
-        { label: 'ERC-20 (Ethereum)', net: 'ERC-20' as ChainNetwork, fee: '~$2-5' },
         { label: 'BEP-20 (BSC)', net: 'BEP-20' as ChainNetwork, fee: '~$0.05' },
+        { label: 'Solana', net: 'SOLANA' as ChainNetwork, fee: '~$0.01' },
+        { label: 'Polygon', net: 'POLYGON' as ChainNetwork, fee: '~$0.02' },
         { label: 'Arbitrum', net: 'ARBITRUM' as ChainNetwork, fee: '~$0.01' },
+        { label: 'ERC-20 (Ethereum)', net: 'ERC-20' as ChainNetwork, fee: '~$2-5' },
+        { label: 'Optimism', net: 'OPTIMISM' as ChainNetwork, fee: '~$0.02' },
+        { label: 'Avalanche', net: 'AVALANCHE' as ChainNetwork, fee: '~$0.03' },
+        { label: 'Base', net: 'BASE' as ChainNetwork, fee: '~$0.01' },
       ]
     : [
-        { label: 'ERC-20 (Ethereum)', net: 'ERC-20' as ChainNetwork, fee: '~$2-5' },
+        { label: 'Solana', net: 'SOLANA' as ChainNetwork, fee: '~$0.01' },
         { label: 'Arbitrum', net: 'ARBITRUM' as ChainNetwork, fee: '~$0.01' },
+        { label: 'Base', net: 'BASE' as ChainNetwork, fee: '~$0.01' },
+        { label: 'Polygon', net: 'POLYGON' as ChainNetwork, fee: '~$0.02' },
+        { label: 'ERC-20 (Ethereum)', net: 'ERC-20' as ChainNetwork, fee: '~$2-5' },
+        { label: 'Optimism', net: 'OPTIMISM' as ChainNetwork, fee: '~$0.02' },
+        { label: 'Avalanche', net: 'AVALANCHE' as ChainNetwork, fee: '~$0.03' },
       ];
 
-  const buttons = nets.map(n => [Markup.button.callback(n.label + ' - ' + n.fee, 'swap_net_' + n.net)]);
+  const buttons = allNets.map(n => [Markup.button.callback(n.label + ' - ' + n.fee, 'swap_net_' + n.net)]);
   buttons.push([Markup.button.callback('Cancelar', 'swap_cancel')]);
   await ctx.editMessageText(currency + ' -> Selecciona la red:', Markup.inlineKeyboard(buttons));
 }
@@ -123,9 +133,9 @@ export async function handleSwapNetwork(ctx: Context): Promise<void> {
 // Step 2: Direction
 // ============================================================
 async function showDirectionMenu(ctx: Context): Promise<void> {
-  await ctx.editMessageText('A donde quieres recibir?', Markup.inlineKeyboard([
-    [Markup.button.callback('Lightning (rapido)', 'swap_dir_ONCHAIN2LN')],
-    [Markup.button.callback('BTC On-chain', 'swap_dir_LN2ONCHAIN')],
+  await ctx.editMessageText('Que tipo de intercambio quieres hacer?', Markup.inlineKeyboard([
+    [Markup.button.callback('Enviar BTC On-chain -> Recibir en Lightning', 'swap_dir_ONCHAIN2LN')],
+    [Markup.button.callback('Enviar por Lightning -> Recibir BTC On-chain', 'swap_dir_LN2ONCHAIN')],
     [Markup.button.callback('Cancelar', 'swap_cancel')],
   ]));
 }
