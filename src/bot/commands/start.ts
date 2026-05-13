@@ -2,6 +2,7 @@ import { Context, Markup } from 'telegraf';
 import { getUserState } from '../middleware/user';
 import { showHelp } from './showHelp';
 import { commissionEngine } from '../../engine/commission';
+import { swapCommand } from './swap';
 import { raffleCommand } from './raffle';
 
 export async function startCommand(ctx: Context): Promise<void> {
@@ -41,7 +42,7 @@ export async function handleStartCallback(ctx: Context): Promise<void> {
   switch (action) {
     case 'start_swap':
       await ctx.answerCbQuery();
-      await ctx.reply('Usa /swap para iniciar un intercambio.');
+      await swapCommand(ctx);
       break;
     case 'show_rates':
       await ctx.answerCbQuery();
