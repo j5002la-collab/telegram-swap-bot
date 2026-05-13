@@ -11,8 +11,12 @@ import { raffleCommand, handleRaffleWinners } from './commands/raffle';
 import { adminCommand, handleAdminForceRaffle } from './commands/admin';
 import { rateLimitMiddleware } from './middleware/rate-limit';
 import { errorMiddleware } from './middleware/error';
+import { BoltzWebSocket } from '../boltz/websocket';
+import { setSwapState } from './commands/swap';
 
-export function createBot(): Telegraf<Context> {
+export function createBot(boltzWs?: BoltzWebSocket): Telegraf<Context> {
+  // Store WebSocket globally for swap commands to use
+  if (boltzWs) setSwapState({ ws: boltzWs });
   const bot = new Telegraf<Context>(config.botToken);
 
   // Global middleware (order matters: rate-limit → error → user)
@@ -48,6 +52,9 @@ export function createBot(): Telegraf<Context> {
       updateType: ctx.updateType,
     });
   });
+
+  // Store bot reference for async WebSocket updates
+  setSwapState({ bot });
 
   return bot;
 }
