@@ -150,11 +150,23 @@ export async function handleSwapNetwork(ctx: Context): Promise<void> {
 // Step 2: Direction
 // ============================================================
 async function showDirectionMenu(ctx: Context): Promise<void> {
-  await ctx.editMessageText('Que tipo de intercambio quieres hacer?', Markup.inlineKeyboard([
-    [Markup.button.callback('Enviar BTC On-chain -> Recibir en Lightning', 'swap_dir_ONCHAIN2LN')],
-    [Markup.button.callback('Enviar por Lightning -> Recibir BTC On-chain', 'swap_dir_LN2ONCHAIN')],
-    [Markup.button.callback('Cancelar', 'swap_cancel')],
-  ]));
+  const s = ss(ctx);
+  const isBTC = !s || s.currency === 'BTC';
+
+  if (isBTC) {
+    await ctx.editMessageText('Que tipo de intercambio quieres hacer?', Markup.inlineKeyboard([
+      [Markup.button.callback('Enviar BTC On-chain -> Recibir en Lightning', 'swap_dir_ONCHAIN2LN')],
+      [Markup.button.callback('Enviar por Lightning -> Recibir BTC On-chain', 'swap_dir_LN2ONCHAIN')],
+      [Markup.button.callback('Cancelar', 'swap_cancel')],
+    ]));
+  } else {
+    const cur = s.currency || 'USDT';
+    await ctx.editMessageText(cur + ' -> Selecciona destino:', Markup.inlineKeyboard([
+      [Markup.button.callback('Recibir en Lightning', 'swap_dir_ONCHAIN2LN')],
+      [Markup.button.callback('Recibir en BTC On-chain', 'swap_dir_LN2ONCHAIN')],
+      [Markup.button.callback('Cancelar', 'swap_cancel')],
+    ]));
+  }
 }
 
 export async function handleSwapDirection(ctx: Context): Promise<void> {
@@ -169,23 +181,25 @@ export async function handleSwapDirection(ctx: Context): Promise<void> {
   s.destChain = dir === 'LN2ONCHAIN' ? 'BTC' : 'LIGHTNING';
 
   if (s.currency === 'BTC' && dir === 'ONCHAIN2LN') {
-    // Submarine: necesita invoice Lightning (con monto incluido!)
     s.step = 'invoice';
     setSs(ctx, s);
     await ctx.editMessageText(
-      'Swap: BTC On-chain -> Lightning\n\n' +
-      'Pega tu invoice de Lightning (lnbc...).\n' +
-      'El monto se detectara automaticamente de la invoice.\n' +
-      'Si la invoice no tiene monto, tienes que ingresarlo manualmente.',
+      'BTC On-chain -> Lightning\n\nPega tu invoice de Lightning (lnbc...).\nEl monto se detectara automaticamente.',
+      Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
+    );
+  } else if (s.currency !== 'BTC') {
+    s.step = 'address';
+    setSs(ctx, s);
+    const destType = s.destChain === 'LIGHTNING' ? 'Lightning (invoice lnbc...)' : 'BTC On-chain (bc1...)';
+    await ctx.editMessageText(
+      'Direccion ' + destType + ':\n\nPega la direccion donde recibiras los fondos.',
       Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
     );
   } else {
-    // Reverse o USDT/USDC: solo necesita monto
     s.step = 'amount';
     setSs(ctx, s);
-    const label = s.currency === 'BTC' ? 'sats' : s.currency || 'sats';
     await ctx.editMessageText(
-      'Ingresa el monto (' + label + '):\nMin: 25,000 | Max: 25,000,000',
+      'Ingresa el monto en sats:\nMin: 25,000 | Max: 25,000,000',
       Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
     );
   }
