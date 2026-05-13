@@ -23,7 +23,7 @@ export function setSwapState(state: { bot?: Telegraf<Context>; ws?: BoltzWebSock
 }
 
 interface SwapSession {
-  step: 'currency' | 'network' | 'direction' | 'invoice' | 'amount' | 'confirm';
+  step: 'currency' | 'network' | 'direction' | 'invoice' | 'amount' | 'address' | 'confirm';
   currency?: 'BTC' | 'USDT' | 'USDC';
   sourceChain?: ChainNetwork;
   destChain?: ChainNetwork;
@@ -32,6 +32,7 @@ interface SwapSession {
   rateInfo?: RateInfo;
   fee?: FeeBreakdown;
   invoice?: string;
+  destAddress?: string;
   preimage?: Buffer;
 }
 
@@ -223,8 +224,29 @@ export async function handleSwapInvoice(ctx: Context): Promise<void> {
 }
 
 // ============================================================
-// Step 4: Amount → fee breakdown
+// Step 4: Address (USDT/USDC) + Amount
 // ============================================================
+export async function handleSwapAddress(ctx: Context): Promise<void> {
+  if (!ctx.message || !('text' in ctx.message)) return;
+  const s = ss(ctx);
+  if (!s || s.step !== 'address') return;
+
+  const raw = ctx.message.text.trim();
+  if (!raw || raw.length < 10) {
+    await ctx.reply('Direccion muy corta. Intenta de nuevo.');
+    return;
+  }
+
+  s.destAddress = raw;
+  s.step = 'amount';
+  setSs(ctx, s);
+
+  await ctx.reply(
+    'Direccion guardada. Ingresa el monto en USD:\nEjemplo: 100 ($100)\nMin: 10 | Max: 25,000',
+    Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
+  );
+}
+
 export async function handleSwapAmount(ctx: Context): Promise<void> {
   if (!ctx.message || !('text' in ctx.message)) return;
   const s = ss(ctx);
@@ -369,7 +391,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
     const exchange = await cnClient.createExchange({
       fromCurrency: ticker, toCurrency,
       fromAmount, toAmount: estimate.estimatedAmount,
-      address: userState?.userId || 'btc_address_required',
+      address: s.destAddress || 'bc1q_required',
       flow: 'fixed-rate', rateId: estimate.rateId,
     });
 

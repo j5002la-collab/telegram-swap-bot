@@ -5,7 +5,7 @@ import { logger } from '../utils/logger';
 import { userMiddleware } from './middleware/user';
 import { startCommand, handleStartCallback } from './commands/start';
 import { helpCommand } from './commands/help';
-import { swapCommand, handleSwapCurrency, handleSwapNetwork, handleSwapDirection, handleSwapAmount, handleSwapConfirm } from './commands/swap';
+import { swapCommand, handleSwapCurrency, handleSwapNetwork, handleSwapDirection, handleSwapAddress, handleSwapAmount, handleSwapConfirm } from './commands/swap';
 import { calcCommand, handleCalcText } from './commands/calc';
 import { raffleCommand, handleRaffleWinners } from './commands/raffle';
 import { adminCommand, handleAdminForceRaffle } from './commands/admin';
