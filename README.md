@@ -35,6 +35,21 @@ No-custodial. Sin registro. Sin KYC. Sin ordenes P2P. Solo pega una factura, con
 7. Notificación de completado
 ```
 
+## 🚀 Deploy
+
+Ver la guía completa: [DEPLOY.md](DEPLOY.md)
+
+Despliegue rápido con Docker:
+```bash
+git clone https://github.com/j5002la-collab/telegram-swap-bot.git
+cd telegram-swap-bot
+cp .env-sample .env
+# Editar .env con tu BOT_TOKEN y ADMIN_IDS
+docker compose up -d
+```
+
+Guía para Umbrel: [DEPLOY_UMBREL.md](DEPLOY_UMBREL.md)
+
 ## Desarrollo
 
 ### Prerrequisitos

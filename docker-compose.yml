@@ -1,0 +1,29 @@
+services:
+  mongo:
+    image: mongo:8
+    container_name: swapbot-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: telegram-swap-bot
+    ports:
+      - "27017:27017"
+
+  swapbot:
+    build: .
+    container_name: swapbot
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - MONGO_URI=mongodb://mongo:27017/telegram-swap-bot
+      - BOLTZ_API_URL=${BOLTZ_API_URL:-https://api.boltz.exchange}
+      - COMMISSION_RATE=${COMMISSION_RATE:-2.5}
+      - ADMIN_IDS=${ADMIN_IDS}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - TZ=UTC
+
+volumes:
+  mongo_data:
