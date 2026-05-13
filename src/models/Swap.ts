@@ -8,12 +8,18 @@ export type SwapDirection =
   | 'LN2ONCHAIN'
   | 'ONCHAIN2LN';
 
+export type ChainNetwork = 'TRC-20' | 'ERC-20' | 'BEP-20' | 'ARBITRUM' | 'BTC' | 'LIGHTNING';
+
+export type SwapCurrency = 'BTC' | 'USDT' | 'USDC';
+
 export type SwapStatus = 'pending' | 'completed' | 'failed' | 'refunded';
 
 export interface ISwap extends Document {
   swapId: string;
   userId: string;
   direction: SwapDirection;
+  sourceChain?: ChainNetwork;
+  destChain?: ChainNetwork;
   /** Amount in smallest unit: sats (1 BTC = 100M sats) or cents (1 USDT = 100 cents) */
   sourceAmount: number;
   /** Amount in smallest unit */
@@ -50,6 +56,14 @@ const swapSchema = new Schema<ISwap>(
       type: String,
       required: true,
       enum: ['USDT2BTC', 'BTC2USDT', 'USDC2BTC', 'BTC2USDC', 'LN2ONCHAIN', 'ONCHAIN2LN'],
+    },
+    sourceChain: {
+      type: String,
+      enum: ['TRC-20', 'ERC-20', 'BEP-20', 'ARBITRUM', 'BTC', 'LIGHTNING'],
+    },
+    destChain: {
+      type: String,
+      enum: ['TRC-20', 'ERC-20', 'BEP-20', 'ARBITRUM', 'BTC', 'LIGHTNING'],
     },
     sourceAmount: {
       type: Number,
