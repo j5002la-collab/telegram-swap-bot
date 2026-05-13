@@ -10,7 +10,7 @@ export async function calcCommand(ctx: Context): Promise<void> {
     'Ingresa el monto en sats y te muestro:\n' +
     '- Cuanto recibiras (descontando todas las comisiones)\n' +
     '- Comision SwapBot (1.5% - 2.5%)\n' +
-    '- Comision Boltz (fee de red + mineria)\n' +
+    '- Fee de red + mineria\n' +
     '- Cuanto va al sorteo semanal\n\n' +
     'Ejemplo: 100000\n(en sats)',
   );
@@ -27,7 +27,7 @@ export async function handleCalcText(ctx: Context): Promise<void> {
   try {
     const rateInfo = await rateEngine.getRate('submarine', 'BTC', 'BTC');
     if (!rateInfo) {
-      await ctx.reply('No se pudo conectar con Boltz. Intenta de nuevo.');
+      await ctx.reply('No se pudo conectar. Intenta de nuevo.');
       return;
     }
 
@@ -47,8 +47,8 @@ export async function handleCalcText(ctx: Context): Promise<void> {
       '',
       '--- Comisiones ---',
       'SwapBot (' + fee.commissionRate + '%): ' + fee.commissionAmount.toLocaleString() + ' sats',
-      'Boltz fee (' + fee.boltzFeeRate + '%): ~' + fee.boltzFeeAmount.toLocaleString() + ' sats',
-      'Boltz mineria: ' + fee.boltzMinerFee.toLocaleString() + ' sats',
+      'Fee de red (' + fee.boltzFeeRate + '%): ~' + fee.boltzFeeAmount.toLocaleString() + ' sats',
+      'Mineria de red: ' + fee.boltzMinerFee.toLocaleString() + ' sats',
       '',
       'Total fees: ' + fee.totalFees.toLocaleString() + ' sats',
       '',
@@ -62,7 +62,7 @@ export async function handleCalcText(ctx: Context): Promise<void> {
     }
 
     lines.push('');
-    lines.push('Powered by Boltz — swaps atomicos, no custodia.');
+    lines.push('Swaps instantaneos y seguros.');
 
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('Ir al swap', 'start_swap')],
@@ -71,6 +71,6 @@ export async function handleCalcText(ctx: Context): Promise<void> {
     await ctx.reply(lines.join('\n'), keyboard);
   } catch (error) {
     logger.error('Calc error', { error });
-    await ctx.reply('Error al conectar con Boltz. Intenta de nuevo.');
+    await ctx.reply('Error al conectar. Intenta de nuevo.');
   }
 }

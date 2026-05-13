@@ -98,7 +98,7 @@ export class CommissionEngine {
       '',
       `*Comisiones:*`,
       `  ├── SwapBot \\(${fee.commissionRate}%\\): ${this.formatAmount(fee.commissionAmount, sourceLabel)}`,
-      `  └── Boltz \\(${fee.boltzFeeRate}% \\+ ${fee.boltzMinerFee} sats\\): ~${this.formatAmount(fee.boltzFeeAmount + fee.boltzMinerFee, sourceLabel)}`,
+      `  └── Red \\(${fee.boltzFeeRate}% \\+ ${fee.boltzMinerFee} sats\\): ~${this.formatAmount(fee.boltzFeeAmount + fee.boltzMinerFee, sourceLabel)}`,
       '',
       `⏱ Tiempo estimado: 1\\-5 minutos`,
     ];

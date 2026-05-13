@@ -35,7 +35,7 @@ export const SWAP_MESSAGES = {
   invalidAmount: '⚠️ *Monto inválido.*\n\nPor favor ingresa solo números enteros (ej: 50000). Los montos son en la unidad más pequeña.',
   amountTooLow: (min: number) => `⚠️ *Monto muy bajo.*\n\nEl monto mínimo es ${min.toLocaleString()} unidades.`,
   amountTooHigh: (max: number) => `⚠️ *Monto muy alto.*\n\nEl monto máximo es ${max.toLocaleString()} unidades.`,
-  ratesUnavailable: '⚠️ *No se pudieron obtener las tasas.*\n\nEl servicio de Boltz puede estar temporalmente no disponible. Intenta de nuevo en unos minutos.',
+  ratesUnavailable: '⚠️ *No se pudieron obtener las tasas.*\n\nEl servicio de intercambio puede estar temporalmente no disponible. Intenta de nuevo en unos minutos.',
   ratesError: '❌ *Error al obtener tasas.*\n\nIntenta de nuevo en unos minutos.',
   swapSuccess: (swapId: string) => `✅ *¡Swap completado!*\n\nID: ${swapId}`,
   swapError: '❌ *Error en el swap.*\n\nIntenta de nuevo con /swap. Si el problema persiste, contacta a @admin.',

@@ -206,8 +206,8 @@ async function adminPro(ctx: Context, args: string[]): Promise<void> {
     case '1':
       boltzClient.enablePro();
       await ctx.reply(
-        'Boltz Pro ACTIVADO\n\n' +
-        'Los swaps usaran la API de Boltz Pro.\n' +
+        'Pro Mode ACTIVADO\n\n' +
+        'Los swaps usaran el modo pro para mejores tasas.\n' +
         'Cuando la liquidez este desbalanceada,\n' +
         'los fees bajaran a 0% o negativo.\n\n' +
         'Esto aumenta el margen del bot.'
@@ -217,13 +217,13 @@ async function adminPro(ctx: Context, args: string[]): Promise<void> {
     case 'disable':
     case '0':
       boltzClient.disablePro();
-      await ctx.reply('Boltz Pro DESACTIVADO. Usando API regular.');
+      await ctx.reply('Pro Mode DESACTIVADO. Usando API regular.');
       break;
     case 'status':
     default: {
       const enabled = boltzClient.isProEnabled();
       await ctx.reply(
-        'Boltz Pro: ' + (enabled ? 'ACTIVADO' : 'DESACTIVADO') + '\n\n' +
+        'Pro Mode: ' + (enabled ? 'ACTIVADO' : 'DESACTIVADO') + '\n\n' +
         '/admin pro on  — Activar\n' +
         '/admin pro off — Desactivar'
       );
@@ -259,7 +259,7 @@ export async function adminCommand(ctx: Context): Promise<void> {
         '/admin raffle — Sorteo\n' +
         '/admin treasury — Balance ganancias\n' +
         '/admin withdraw <sats> — Marcar retiro\n' +
-        '/admin pro on|off|status — Boltz Pro\n' +
+        '/admin pro on|off|status — Pro Mode\n' +
         '/admin broadcast — Enviar a todos',
       );
   }
