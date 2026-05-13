@@ -45,7 +45,7 @@ export async function raffleCommand(ctx: Context): Promise<void> {
       ],
     ]);
 
-    await ctx.replyWithMarkdownV2(lines.join('\n'), keyboard);
+    await ctx.reply(lines.join('\n'), keyboard);
   } catch (error) {
     logger.error('Raffle command error', { error });
     await ctx.reply('⚠️ Error al obtener información del sorteo.');
@@ -80,7 +80,7 @@ export async function handleRaffleWinners(ctx: Context): Promise<void> {
       [Markup.button.callback('🔙 Volver', 'show_raffle')],
     ]);
 
-    await ctx.editMessageText(lines.join('\n'), { parse_mode: 'MarkdownV2', reply_markup: keyboard.reply_markup });
+    await ctx.editMessageText(lines.join('\n'), keyboard);
   } catch (error) {
     logger.error('Raffle winners error', { error });
     await ctx.editMessageText('⚠️ Error al cargar ganadores.');
