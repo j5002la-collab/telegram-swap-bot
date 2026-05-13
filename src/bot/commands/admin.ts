@@ -5,7 +5,6 @@ import { commissionEngine } from '../../engine/commission';
 import { raffleEngine } from '../../engine/raffle';
 import { forceRaffleDraw } from '../../jobs/raffle-draw';
 import { treasuryEngine } from '../../engine/treasury';
-import type { CurrencyType } from '../../models';
 import { Swap, User } from '../../models';
 
 function isAdmin(ctx: Context): boolean {
@@ -132,25 +131,8 @@ async function adminRaffle(ctx: Context): Promise<void> {
 // --- /admin treasury ---
 async function adminTreasury(ctx: Context): Promise<void> {
   try {
-    const balances = await treasuryEngine.getBalances();
-    const lines = ['Ganancias acumuladas', ''];
-
-    if (balances.length === 0) {
-      lines.push('No hay cuentas configuradas. Configura WALLET_LIGHTNING_ADDRESS, WALLET_USDT_ADDRESS, WALLET_USDC_ADDRESS en .env');
-    }
-
-    for (const b of balances) {
-      const formatted = commissionEngine.formatAmount(b.balance, b.currency);
-      const addr = b.walletAddress ? b.walletAddress.slice(0, 16) + '...' : 'No configurada';
-      lines.push(`${b.currency}: ${formatted} | Total: ${commissionEngine.formatAmount(b.accumulated, b.currency)}`);
-      lines.push(`  Wallet: ${addr}`);
-    }
-
-    lines.push('');
-    lines.push('Usa /admin withdraw <BTC|USDT|USDC> <monto> para registrar un retiro manual.');
-    lines.push('Las ganancias se acumulan automaticamente con cada swap.');
-
-    await ctx.reply(lines.join('\n'));
+    const balance = await treasuryEngine.getBalance();
+    await ctx.reply(treasuryEngine.formatBalance(balance));
   } catch (error) {
     logger.error('Admin treasury error', { error });
     await ctx.reply('Error.');
@@ -160,34 +142,26 @@ async function adminTreasury(ctx: Context): Promise<void> {
 // --- /admin withdraw ---
 async function adminWithdraw(ctx: Context, args: string[]): Promise<void> {
   if (args.length < 3) {
-    await ctx.reply('Uso: /admin withdraw <BTC|USDT|USDC> <monto_en_unidad_minima>');
+    await ctx.reply('Uso: /admin withdraw <sats>. Ejemplo: /admin withdraw 250000');
     return;
   }
 
-  const currency = args[2].toUpperCase() as CurrencyType;
-  if (!['BTC', 'USDT', 'USDC'].includes(currency)) {
-    await ctx.reply('Moneda invalida. Usa BTC, USDT o USDC.');
-    return;
-  }
-
-  const amount = parseInt(args[3] || '0', 10);
+  const amount = parseInt(args[2] || '0', 10);
   if (isNaN(amount) || amount <= 0) {
-    await ctx.reply('Monto invalido. Debe ser un numero entero en la unidad minima.');
+    await ctx.reply('Monto invalido. Debe ser un numero entero en sats.');
     return;
   }
 
   try {
-    await treasuryEngine.recordWithdrawal(currency, amount);
-    const balances = await treasuryEngine.getBalances();
-    const balance = balances.find((b) => b.currency === currency);
+    await treasuryEngine.recordWithdrawal(amount);
+    const b = await treasuryEngine.getBalance();
     await ctx.reply(
-      `Retiro registrado: ${commissionEngine.formatAmount(amount, currency)}\n` +
-      `Balance restante: ${balance ? commissionEngine.formatAmount(balance.balance, currency) : 'N/A'}\n` +
-      '\n' +
-      'Transfiere manualmente los fondos a tu wallet.\n' +
-      'El monto NO se envia automaticamente — solo se registra en el sistema.',
+      'Retiro registrado: ' + commissionEngine.formatAmount(amount, 'sats') + '\n' +
+      'Balance restante: ' + commissionEngine.formatAmount(b.balance, 'sats') + '\n\n' +
+      'Wallet Lightning: ' + (b.lightningAddress || b.btcAddress || 'No configurada') + '\n\n' +
+      'El monto NO se envia automaticamente.',
     );
-    logger.info('Admin withdrawal recorded', { currency, amount });
+    logger.info('Admin withdrawal recorded', { amount });
   } catch (error) {
     await ctx.reply(`Error: ${error instanceof Error ? error.message : 'invalido'}`);
   }

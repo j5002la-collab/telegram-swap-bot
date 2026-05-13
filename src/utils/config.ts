@@ -9,19 +9,10 @@ export interface Config {
   commissionRate: number;
   adminIds: number[];
   logLevel: string;
-  /** Admin wallet addresses where commissions are sent */
-  wallets: WalletConfig;
-}
-
-export interface WalletConfig {
-  /** Lightning address for BTC/LN earnings (e.g., admin@getalby.com) */
+  /** Lightning address where all commissions go (e.g. admin@getalby.com) */
   lightningAddress: string;
-  /** On-chain BTC address (fallback) */
+  /** BTC on-chain address as fallback */
   btcAddress: string;
-  /** USDT address (TRC-20 or ERC-20 or USDT0) */
-  usdtAddress: string;
-  /** USDC address (ERC-20 or USDT0) */
-  usdcAddress: string;
 }
 
 function parseAdminIds(raw: string | undefined): number[] {
@@ -45,28 +36,16 @@ export function loadConfig(): Config {
     commissionRate: parseFloat(process.env.COMMISSION_RATE || '2.5'),
     adminIds: parseAdminIds(process.env.ADMIN_IDS),
     logLevel: process.env.LOG_LEVEL || 'info',
-    wallets: {
-      lightningAddress: process.env.WALLET_LIGHTNING_ADDRESS || '',
-      btcAddress: process.env.WALLET_BTC_ADDRESS || '',
-      usdtAddress: process.env.WALLET_USDT_ADDRESS || '',
-      usdcAddress: process.env.WALLET_USDC_ADDRESS || '',
-    },
+    lightningAddress: process.env.WALLET_LIGHTNING_ADDRESS || '',
+    btcAddress: process.env.WALLET_BTC_ADDRESS || '',
   };
 }
 
 export function validateConfig(config: Config): string[] {
   const warnings: string[] = [];
-
-  if (!config.wallets.lightningAddress && !config.wallets.btcAddress) {
-    warnings.push('No BTC/Lightning address configured — BTC earnings cannot be withdrawn');
+  if (!config.lightningAddress && !config.btcAddress) {
+    warnings.push('No BTC/Lightning address configured — earnings cannot be tracked');
   }
-  if (!config.wallets.usdtAddress) {
-    warnings.push('No USDT address configured — USDT earnings cannot be withdrawn');
-  }
-  if (!config.wallets.usdcAddress) {
-    warnings.push('No USDC address configured — USDC earnings cannot be withdrawn');
-  }
-
   return warnings;
 }
 
