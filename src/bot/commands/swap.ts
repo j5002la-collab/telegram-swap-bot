@@ -2,6 +2,8 @@ import { Context, Markup } from 'telegraf';
 import { rateEngine, RateInfo } from '../../engine/rates';
 import { commissionEngine, FeeBreakdown } from '../../engine/commission';
 import { raffleEngine } from '../../engine/raffle';
+import { treasuryEngine } from '../../engine/treasury';
+import type { CurrencyType } from '../../models';
 import { getUserState } from '../middleware/user';
 import { logger } from '../../utils/logger';
 import { Swap, SwapDirection } from '../../models';
@@ -259,10 +261,16 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
 
     logger.info('Swap completed', { swapId, dbId: swap._id });
 
-    // Track raffle volume (convert to sats if USDT/USDC: 1 cent ≈ rough BTC equivalent)
+    // Track raffle volume
     const volumeInSats = session.sourceAmount as number;
     raffleEngine.trackSwapVolume(userState?.userId || 'unknown', volumeInSats).catch((err) => {
       logger.error('Raffle tracking failed', { error: err });
+    });
+
+    // Track treasury earnings
+    const currency: CurrencyType = dirInfo?.sourceCur === 'USDT' ? 'USDT' : dirInfo?.sourceCur === 'USDC' ? 'USDC' : 'BTC';
+    treasuryEngine.trackEarnings(currency, session.fee.commissionAmount).catch((err) => {
+      logger.error('Treasury tracking failed', { error: err });
     });
 
     const successMsg =

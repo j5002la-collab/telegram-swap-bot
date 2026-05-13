@@ -4,11 +4,13 @@ import { config } from '../utils/config';
 import { User } from './User';
 import { Swap } from './Swap';
 import { Raffle } from './Raffle';
+import { Treasury } from './Treasury';
 
-export { User, Swap, Raffle };
+export { User, Swap, Raffle, Treasury };
 export type { IUser } from './User';
 export type { ISwap, SwapDirection, SwapStatus } from './Swap';
 export type { IRaffle } from './Raffle';
+export type { ITreasury, CurrencyType } from './Treasury';
 
 export async function connectDatabase(): Promise<void> {
   try {

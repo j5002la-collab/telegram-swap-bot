@@ -3,6 +3,8 @@ import { logger } from './utils/logger';
 import { connectDatabase } from './models';
 import { createBot, launchBot } from './bot/bot';
 import { startRaffleScheduler } from './jobs/raffle-draw';
+import { treasuryEngine } from './engine/treasury';
+import { validateConfig } from './utils/config';
 
 async function main(): Promise<void> {
   logger.info('Starting Telegram Swap Bot...', {
@@ -14,6 +16,15 @@ async function main(): Promise<void> {
   try {
     // Connect to MongoDB
     await connectDatabase();
+
+    // Initialize treasury accounts
+    await treasuryEngine.initialize();
+
+    // Validate wallet config and show warnings
+    const warnings = validateConfig(config);
+    for (const w of warnings) {
+      logger.warn(w);
+    }
 
     // Start raffle scheduler (Sundays 23:59 UTC)
     startRaffleScheduler();
