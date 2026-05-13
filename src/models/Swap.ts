@@ -14,14 +14,19 @@ export interface ISwap extends Document {
   swapId: string;
   userId: string;
   direction: SwapDirection;
+  /** Amount in smallest unit: sats (1 BTC = 100M sats) or cents (1 USDT = 100 cents) */
   sourceAmount: number;
+  /** Amount in smallest unit */
   destAmount: number;
   sourceCurrency: string;
   destCurrency: string;
   boltzSwapId: string;
   boltzStatus: string;
+  /** Commission rate percentage (e.g., 2.5 = 2.5%) */
   commissionRate: number;
+  /** Commission amount in smallest unit */
   commissionAmount: number;
+  /** Bot net profit in smallest unit */
   botProfit: number;
   status: SwapStatus;
   createdAt: Date;
@@ -49,10 +54,14 @@ const swapSchema = new Schema<ISwap>(
     sourceAmount: {
       type: Number,
       required: true,
+      min: 0,
+      validate: Number.isInteger,
     },
     destAmount: {
       type: Number,
       required: true,
+      min: 0,
+      validate: Number.isInteger,
     },
     sourceCurrency: {
       type: String,
@@ -73,14 +82,19 @@ const swapSchema = new Schema<ISwap>(
     commissionRate: {
       type: Number,
       required: true,
+      min: 0,
     },
     commissionAmount: {
       type: Number,
       required: true,
+      min: 0,
+      validate: Number.isInteger,
     },
     botProfit: {
       type: Number,
       required: true,
+      min: 0,
+      validate: Number.isInteger,
     },
     status: {
       type: String,

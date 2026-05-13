@@ -2,7 +2,9 @@ import mongoose, { Schema, Document } from 'mongoose';
 
 export interface IRaffle extends Document {
   weekNumber: number;
+  /** Prize pool in sats */
   prizePool: number;
+  /** Total volume in sats */
   totalVolume: number;
   participants: number;
   winnerId?: string;
@@ -25,11 +27,15 @@ const raffleSchema = new Schema<IRaffle>(
       type: Number,
       required: true,
       default: 0,
+      min: 0,
+      validate: Number.isInteger,
     },
     totalVolume: {
       type: Number,
       required: true,
       default: 0,
+      min: 0,
+      validate: Number.isInteger,
     },
     participants: {
       type: Number,

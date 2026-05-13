@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { Telegraf, Context } from 'telegraf';
 import { config } from '../utils/config';
 import { logger } from '../utils/logger';
@@ -35,13 +36,16 @@ export async function launchBot(bot: Telegraf<Context>): Promise<void> {
     logger.info('Bot launched successfully');
 
     // Enable graceful stop
-    const stopBot = () => {
-      logger.info('Stopping bot...');
+    const gracefulShutdown = async () => {
+      logger.info('Shutting down gracefully...');
       bot.stop();
+      await mongoose.disconnect();
+      logger.info('Shutdown complete');
+      process.exit(0);
     };
 
-    process.once('SIGINT', stopBot);
-    process.once('SIGTERM', stopBot);
+    process.once('SIGINT', () => gracefulShutdown());
+    process.once('SIGTERM', () => gracefulShutdown());
   } catch (error) {
     logger.error('Failed to launch bot', { error });
     throw error;

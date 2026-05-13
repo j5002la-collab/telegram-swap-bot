@@ -1,5 +1,6 @@
 import { Context, Middleware } from 'telegraf';
 import { User } from '../../models';
+import { logger } from '../../utils/logger';
 
 export interface UserState {
   userId: string;
@@ -35,10 +36,18 @@ export const userMiddleware: Middleware<Context> = async (ctx, next) => {
     let user = await User.findOne({ telegramId });
 
     if (user) {
-      user.lastSeen = new Date();
-      user.username = username;
-      user.firstName = firstName;
-      await user.save();
+      // Debounce: only update lastSeen every 2 minutes to avoid DB write pressure
+      const twoMinutesAgo = Date.now() - 2 * 60 * 1000;
+      const needsUpdate = user.lastSeen.getTime() < twoMinutesAgo ||
+        user.username !== username ||
+        user.firstName !== firstName;
+
+      if (needsUpdate) {
+        user.lastSeen = new Date();
+        user.username = username;
+        user.firstName = firstName;
+        await user.save();
+      }
     } else {
       user = await User.create({
         telegramId,
@@ -55,7 +64,7 @@ export const userMiddleware: Middleware<Context> = async (ctx, next) => {
       isNewUser: user.swapsCount === 0,
     });
   } catch (error) {
-    console.error('User middleware error:', error);
+    logger.error('User middleware error', { error });
   }
 
   await next();

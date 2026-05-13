@@ -7,6 +7,7 @@ export interface IUser extends Document {
   firstSeen: Date;
   lastSeen: Date;
   swapsCount: number;
+  /** Total swap volume in sats (or cents for USDT/USDC) */
   totalVolume: number;
   raffleTickets: number;
   createdAt: Date;
@@ -44,6 +45,8 @@ const userSchema = new Schema<IUser>(
     totalVolume: {
       type: Number,
       default: 0,
+      min: 0,
+      validate: Number.isInteger,
     },
     raffleTickets: {
       type: Number,
