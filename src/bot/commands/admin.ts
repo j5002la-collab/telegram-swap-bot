@@ -4,44 +4,34 @@ import { logger } from '../../utils/logger';
 import { commissionEngine } from '../../engine/commission';
 import { raffleEngine } from '../../engine/raffle';
 import { forceRaffleDraw } from '../../jobs/raffle-draw';
+import { treasuryEngine } from '../../engine/treasury';
+import type { CurrencyType } from '../../models';
 import { Swap, User } from '../../models';
-import { getUserState } from '../middleware/user';
 
-/**
- * Admin authorization middleware check.
- * Returns true if user is admin.
- */
 function isAdmin(ctx: Context): boolean {
-  const userId = Number(ctx.from?.id);
-  return config.adminIds.includes(userId);
+  return config.adminIds.includes(Number(ctx.from?.id));
 }
 
 async function unauthorized(ctx: Context): Promise<void> {
-  await ctx.reply('⛔ No tienes permisos de administrador\\.');
+  await ctx.reply('No tienes permisos de administrador.');
 }
 
 // --- /admin volume ---
 async function adminVolume(ctx: Context): Promise<void> {
   try {
     const now = new Date();
-
-    // Today's stats
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const todaySwaps = await Swap.countDocuments({ createdAt: { $gte: todayStart }, status: 'completed' });
     const todayVolume = await Swap.aggregate([
       { $match: { createdAt: { $gte: todayStart }, status: 'completed' } },
       { $group: { _id: null, total: { $sum: '$sourceAmount' }, profit: { $sum: '$botProfit' } } },
     ]);
-
-    // Week stats
     const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
     const weekSwaps = await Swap.countDocuments({ createdAt: { $gte: weekStart }, status: 'completed' });
     const weekVolume = await Swap.aggregate([
       { $match: { createdAt: { $gte: weekStart }, status: 'completed' } },
       { $group: { _id: null, total: { $sum: '$sourceAmount' }, profit: { $sum: '$botProfit' } } },
     ]);
-
-    // All time
     const allSwaps = await Swap.countDocuments({ status: 'completed' });
     const allVolume = await Swap.aggregate([
       { $match: { status: 'completed' } },
@@ -52,57 +42,36 @@ async function adminVolume(ctx: Context): Promise<void> {
     const weekProfit = weekVolume[0]?.profit || 0;
     const allProfit = allVolume[0]?.profit || 0;
 
-    const lines = [
-      `📊 *Estadísticas del Bot*`,
-      '',
-      `*Hoy:*`,
-      `  Swaps: ${todaySwaps}`,
-      `  Ganancia: ${commissionEngine.formatAmount(todayProfit, 'sats')}`,
-      '',
-      `*Esta semana:*`,
-      `  Swaps: ${weekSwaps}`,
-      `  Ganancia: ${commissionEngine.formatAmount(weekProfit, 'sats')}`,
-      '',
-      `*Total histórico:*`,
-      `  Swaps: ${allSwaps}`,
-      `  Ganancia: ${commissionEngine.formatAmount(allProfit, 'sats')}`,
-      '',
-      `Comisión actual: ${commissionEngine.getCommissionRate()}%`,
-    ];
-
-    await ctx.replyWithMarkdownV2(lines.join('\n'));
+    await ctx.reply(
+      'Stats\n\n' +
+      `Hoy: ${todaySwaps} swaps, profit ${commissionEngine.formatAmount(todayProfit, 'sats')}\n` +
+      `Semana: ${weekSwaps} swaps, profit ${commissionEngine.formatAmount(weekProfit, 'sats')}\n` +
+      `Total: ${allSwaps} swaps, profit ${commissionEngine.formatAmount(allProfit, 'sats')}\n` +
+      `Comision actual: ${commissionEngine.getCommissionRate()}%`,
+    );
   } catch (error) {
     logger.error('Admin volume error', { error });
-    await ctx.reply('⚠️ Error al obtener estadísticas\\.');
+    await ctx.reply('Error.');
   }
 }
 
 // --- /admin swaps ---
 async function adminSwaps(ctx: Context): Promise<void> {
   try {
-    const recentSwaps = await Swap.find()
-      .sort({ createdAt: -1 })
-      .limit(20)
-      .select('swapId userId direction sourceAmount sourceCurrency destAmount destCurrency commissionAmount botProfit status createdAt');
-
+    const recentSwaps = await Swap.find().sort({ createdAt: -1 }).limit(20);
     if (recentSwaps.length === 0) {
-      await ctx.reply('📋 No hay swaps registrados aún\\.');
+      await ctx.reply('No hay swaps aun.');
       return;
     }
-
-    const lines = ['📋 *Últimos 20 Swaps*', ''];
-
+    const lines = ['Ultimos 20 swaps', ''];
     for (const s of recentSwaps) {
-      const statusEmoji = s.status === 'completed' ? '✅' : s.status === 'failed' ? '❌' : s.status === 'refunded' ? '↩️' : '⏳';
-      lines.push(
-        `${statusEmoji} \`${s.swapId}\` ${s.direction} — ${s.commissionAmount} profit — ${s.createdAt.toISOString().slice(0, 19)}`,
-      );
+      const emoji = s.status === 'completed' ? 'O' : s.status === 'failed' ? 'X' : '-';
+      lines.push(`${emoji} ${s.swapId} ${s.direction} profit=${s.botProfit} ${s.createdAt.toISOString().slice(0, 19)}`);
     }
-
-    await ctx.replyWithMarkdownV2(lines.join('\n'));
+    await ctx.reply(lines.join('\n'));
   } catch (error) {
     logger.error('Admin swaps error', { error });
-    await ctx.reply('⚠️ Error al obtener swaps\\.');
+    await ctx.reply('Error.');
   }
 }
 
@@ -110,52 +79,32 @@ async function adminSwaps(ctx: Context): Promise<void> {
 async function adminUsers(ctx: Context): Promise<void> {
   try {
     const totalUsers = await User.countDocuments();
-    const activeToday = await User.countDocuments({
-      lastSeen: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-    });
-    const activeWeek = await User.countDocuments({
-      lastSeen: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
-    });
-
-    const lines = [
-      `👥 *Estadísticas de Usuarios*`,
-      '',
-      `Total registrados: ${totalUsers}`,
-      `Activos hoy: ${activeToday}`,
-      `Activos esta semana: ${activeWeek}`,
-    ];
-
-    await ctx.replyWithMarkdownV2(lines.join('\n'));
+    const active24h = await User.countDocuments({ lastSeen: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } });
+    const active7d = await User.countDocuments({ lastSeen: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } });
+    await ctx.reply(`Total: ${totalUsers}\nActivos 24h: ${active24h}\nActivos 7d: ${active7d}`);
   } catch (error) {
     logger.error('Admin users error', { error });
-    await ctx.reply('⚠️ Error al obtener usuarios\\.');
+    await ctx.reply('Error.');
   }
 }
 
-// --- /admin fee <rate> ---
+// --- /admin fee ---
 async function adminFee(ctx: Context, args: string[]): Promise<void> {
   if (args.length < 3) {
-    await ctx.replyWithMarkdownV2(
-      `💸 Comisión actual: *${commissionEngine.getCommissionRate()}%*\n\nUso: \`/admin fee 1\\.8\` \\(entre 1\\.5 y 2\\.5\\)`,
-    );
+    await ctx.reply(`Comision actual: ${commissionEngine.getCommissionRate()}%\nUso: /admin fee 1.8 (1.5-2.5)`);
     return;
   }
-
   const newRate = parseFloat(args[2]);
-
   if (isNaN(newRate)) {
-    await ctx.reply('⚠️ El valor debe ser un número \\(ej: 1\\.8\\)\\.');
+    await ctx.reply('Debe ser un numero (ej: 1.8).');
     return;
   }
-
   try {
     commissionEngine.setCommissionRate(newRate);
-    await ctx.replyWithMarkdownV2(`✅ Comisión actualizada a *${newRate}%*`);
-    logger.info('Admin changed commission rate', { newRate });
+    await ctx.reply(`Comision actualizada a ${newRate}%`);
+    logger.info('Admin changed commission', { newRate });
   } catch (error) {
-    await ctx.replyWithMarkdownV2(
-      `⚠️ ${error instanceof Error ? error.message : 'Error al cambiar comisión'}`,
-    );
+    await ctx.reply(`Error: ${error instanceof Error ? error.message : 'invalido'}`);
   }
 }
 
@@ -163,149 +112,160 @@ async function adminFee(ctx: Context, args: string[]): Promise<void> {
 async function adminRaffle(ctx: Context): Promise<void> {
   try {
     const status = await raffleEngine.getRaffleStatus();
-
-    if (!status) {
-      await ctx.reply('⚠️ No hay sorteo activo\\.');
-      return;
-    }
-
+    if (!status) { await ctx.reply('No hay sorteo.'); return; }
     const lines = [
-      `🎁 *Admin: Estado del Sorteo*`,
-      '',
-      `Semana: ${status.weekNumber}`,
+      `Sorteo semana ${status.weekNumber}`,
       `Premio: ${status.prizePool.toLocaleString()} sats`,
       `Volumen: ${status.totalVolume.toLocaleString()} sats`,
       `Participantes: ${status.participants}`,
-      `Pagado: ${status.paid ? '✅ Sí' : '⏳ No'}`,
-      '',
+      `Pagado: ${status.paid ? 'Si' : 'No'}`,
     ];
-
-    if (status.lastWinner) {
-      lines.push(`Último ganador: @${status.lastWinner}`);
-    }
-
-    const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('🎯 Forzar sorteo', 'admin_force_raffle')],
-    ]);
-
-    await ctx.replyWithMarkdownV2(lines.join('\n'), keyboard);
+    if (status.lastWinner) lines.push(`Ultimo ganador: @${status.lastWinner}`);
+    const keyboard = Markup.inlineKeyboard([[Markup.button.callback('Forzar sorteo', 'admin_force_raffle')]]);
+    await ctx.reply(lines.join('\n'), keyboard);
   } catch (error) {
     logger.error('Admin raffle error', { error });
-    await ctx.reply('⚠️ Error\\.');
+    await ctx.reply('Error.');
   }
 }
 
-// --- /admin broadcast <message> ---
-async function adminBroadcast(ctx: Context, args: string[]): Promise<void> {
-  if (args.length < 3) {
-    await ctx.reply('⚠️ Uso: `/admin broadcast Mensaje a enviar a todos los usuarios`');
-    return;
-  }
-
-  const message = args.slice(2).join(' ');
-
+// --- /admin treasury ---
+async function adminTreasury(ctx: Context): Promise<void> {
   try {
-    const users = await User.find({}).select('telegramId');
-    let sentCount = 0;
-    let failCount = 0;
+    const balances = await treasuryEngine.getBalances();
+    const lines = ['Ganancias acumuladas', ''];
 
-    await ctx.reply(`📢 Enviando broadcast a ${users.length} usuarios...`);
-
-    for (const user of users) {
-      try {
-        await ctx.telegram.sendMessage(Number(user.telegramId), `📢 *Anuncio SwapBot*\n\n${message}`, { parse_mode: 'MarkdownV2' });
-        sentCount++;
-      } catch {
-        failCount++;
-      }
-      // Rate limit: 30 msg/sec max
-      await new Promise((r) => setTimeout(r, 50));
+    if (balances.length === 0) {
+      lines.push('No hay cuentas configuradas. Configura WALLET_LIGHTNING_ADDRESS, WALLET_USDT_ADDRESS, WALLET_USDC_ADDRESS en .env');
     }
 
-    await ctx.replyWithMarkdownV2(
-      `📢 *Broadcast completado*\n\n✅ Enviados: ${sentCount}\n❌ Fallidos: ${failCount}`,
-    );
-    logger.info('Admin broadcast', { sentCount, failCount, message });
+    for (const b of balances) {
+      const formatted = commissionEngine.formatAmount(b.balance, b.currency);
+      const addr = b.walletAddress ? b.walletAddress.slice(0, 16) + '...' : 'No configurada';
+      lines.push(`${b.currency}: ${formatted} | Total: ${commissionEngine.formatAmount(b.accumulated, b.currency)}`);
+      lines.push(`  Wallet: ${addr}`);
+    }
+
+    lines.push('');
+    lines.push('Usa /admin withdraw <BTC|USDT|USDC> <monto> para registrar un retiro manual.');
+    lines.push('Las ganancias se acumulan automaticamente con cada swap.');
+
+    await ctx.reply(lines.join('\n'));
   } catch (error) {
-    logger.error('Admin broadcast error', { error });
-    await ctx.reply('⚠️ Error al enviar broadcast\\.');
+    logger.error('Admin treasury error', { error });
+    await ctx.reply('Error.');
   }
 }
 
-// --- /admin command dispatcher ---
-export async function adminCommand(ctx: Context): Promise<void> {
-  if (!isAdmin(ctx)) {
-    await unauthorized(ctx);
+// --- /admin withdraw ---
+async function adminWithdraw(ctx: Context, args: string[]): Promise<void> {
+  if (args.length < 3) {
+    await ctx.reply('Uso: /admin withdraw <BTC|USDT|USDC> <monto_en_unidad_minima>');
     return;
   }
+
+  const currency = args[2].toUpperCase() as CurrencyType;
+  if (!['BTC', 'USDT', 'USDC'].includes(currency)) {
+    await ctx.reply('Moneda invalida. Usa BTC, USDT o USDC.');
+    return;
+  }
+
+  const amount = parseInt(args[3] || '0', 10);
+  if (isNaN(amount) || amount <= 0) {
+    await ctx.reply('Monto invalido. Debe ser un numero entero en la unidad minima.');
+    return;
+  }
+
+  try {
+    await treasuryEngine.recordWithdrawal(currency, amount);
+    const balances = await treasuryEngine.getBalances();
+    const balance = balances.find((b) => b.currency === currency);
+    await ctx.reply(
+      `Retiro registrado: ${commissionEngine.formatAmount(amount, currency)}\n` +
+      `Balance restante: ${balance ? commissionEngine.formatAmount(balance.balance, currency) : 'N/A'}\n` +
+      '\n' +
+      'Transfiere manualmente los fondos a tu wallet.\n' +
+      'El monto NO se envia automaticamente — solo se registra en el sistema.',
+    );
+    logger.info('Admin withdrawal recorded', { currency, amount });
+  } catch (error) {
+    await ctx.reply(`Error: ${error instanceof Error ? error.message : 'invalido'}`);
+  }
+}
+
+// --- /admin broadcast ---
+async function adminBroadcast(ctx: Context, args: string[]): Promise<void> {
+  if (args.length < 3) {
+    await ctx.reply('Uso: /admin broadcast Mensaje a enviar');
+    return;
+  }
+  const message = args.slice(2).join(' ');
+  try {
+    const users = await User.find({}).select('telegramId');
+    let sent = 0, fail = 0;
+    await ctx.reply(`Enviando a ${users.length} usuarios...`);
+    for (const user of users) {
+      try {
+        await ctx.telegram.sendMessage(Number(user.telegramId), 'SwapBot: ' + message);
+        sent++;
+      } catch { fail++; }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    await ctx.reply(`Broadcast: ${sent} enviados, ${fail} fallidos`);
+    logger.info('Admin broadcast', { sent, fail });
+  } catch (error) {
+    logger.error('Admin broadcast error', { error });
+    await ctx.reply('Error.');
+  }
+}
+
+// --- Dispatch ---
+export async function adminCommand(ctx: Context): Promise<void> {
+  if (!isAdmin(ctx)) { await unauthorized(ctx); return; }
 
   const msg = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
   const parts = msg.split(/\s+/);
-  const subcommand = parts[1] || 'help';
+  const sub = parts[1] || 'help';
 
-  switch (subcommand) {
-    case 'volume':
-      await adminVolume(ctx);
-      break;
-    case 'swaps':
-    case 'orders':
-      await adminSwaps(ctx);
-      break;
-    case 'users':
-      await adminUsers(ctx);
-      break;
-    case 'fee':
-      await adminFee(ctx, parts);
-      break;
-    case 'raffle':
-      await adminRaffle(ctx);
-      break;
-    case 'broadcast':
-      await adminBroadcast(ctx, parts);
-      break;
-    case 'help':
+  switch (sub) {
+    case 'volume': await adminVolume(ctx); break;
+    case 'swaps': case 'orders': await adminSwaps(ctx); break;
+    case 'users': await adminUsers(ctx); break;
+    case 'fee': await adminFee(ctx, parts); break;
+    case 'raffle': await adminRaffle(ctx); break;
+    case 'treasury': case 'balance': case 'wallet': await adminTreasury(ctx); break;
+    case 'withdraw': await adminWithdraw(ctx, parts); break;
+    case 'broadcast': await adminBroadcast(ctx, parts); break;
     default:
-      await ctx.replyWithMarkdownV2(
-        `🤖 *Admin Panel*\n\n` +
-        `/admin volume — Estadísticas de volumen\n` +
-        `/admin swaps — Últimos 20 swaps\n` +
-        `/admin users — Usuarios activos\n` +
-        `/admin fee <rate> — Cambiar comisión \\(1\\.5\\-2\\.5\\)\n` +
-        `/admin raffle — Estado del sorteo\n` +
-        `/admin broadcast <msg> — Enviar a todos`,
+      await ctx.reply(
+        'Admin Panel\n\n' +
+        '/admin volume — Estadisticas\n' +
+        '/admin swaps — Ultimos swaps\n' +
+        '/admin users — Usuarios\n' +
+        '/admin fee 1.8 — Cambiar comision (1.5-2.5)\n' +
+        '/admin raffle — Sorteo\n' +
+        '/admin treasury — Balance ganancias\n' +
+        '/admin withdraw BTC 100000 — Retiro\n' +
+        '/admin broadcast — Enviar a todos',
       );
   }
 }
 
-// --- Admin callback handlers ---
 export async function handleAdminForceRaffle(ctx: Context): Promise<void> {
   if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
-
-  if (!isAdmin(ctx)) {
-    await ctx.answerCbQuery('⛔ No autorizado');
-    return;
-  }
-
-  await ctx.answerCbQuery('Ejecutando sorteo...');
-
+  if (!isAdmin(ctx)) { await ctx.answerCbQuery('No autorizado'); return; }
+  await ctx.answerCbQuery('Ejecutando...');
   try {
     const result = await forceRaffleDraw();
     if (result) {
       await ctx.editMessageText(
-        `🎯 *Sorteo ejecutado\\!*\n\n` +
-        `Semana: ${result.weekNumber}\n` +
-        `Ganador: @${result.winnerUsername}\n` +
-        `Premio: ${result.prizePool.toLocaleString()} sats\n` +
-        `Tickets: ${result.winnerTickets}\n` +
-        `Participantes: ${result.participants}`,
-        { parse_mode: 'MarkdownV2' },
+        `Sorteo ejecutado!\nSemana: ${result.weekNumber}\nGanador: @${result.winnerUsername}\nPremio: ${result.prizePool.toLocaleString()} sats\nParticipantes: ${result.participants}`,
       );
-      logger.info('Admin executed raffle draw', { winner: result.winnerUsername });
     } else {
-      await ctx.editMessageText('⚠️ El sorteo ya fue ejecutado o no hay participantes\\.');
+      await ctx.editMessageText('El sorteo ya fue ejecutado o no hay participantes.');
     }
   } catch (error) {
     logger.error('Admin force raffle error', { error });
-    await ctx.editMessageText('⚠️ Error al ejecutar sorteo\\.');
+    await ctx.editMessageText('Error.');
   }
 }
