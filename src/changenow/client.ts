@@ -58,12 +58,21 @@ export const USDT_NETWORKS: Record<string, string> = {
   'ERC-20': 'usdterc20',
   'BEP-20': 'usdtbsc',
   'ARBITRUM': 'usdtarbitrum',
+  'SOLANA': 'usdtsol',
+  'POLYGON': 'usdtmatic',
+  'OPTIMISM': 'usdtop',
+  'AVALANCHE': 'usdtavaxc',
+  'BASE': 'usdtbase',
 };
 
 export const USDC_NETWORKS: Record<string, string> = {
   'ERC-20': 'usdcerc20',
   'ARBITRUM': 'usdcarbitrum',
   'BASE': 'usdcbase',
+  'SOLANA': 'usdcsol',
+  'POLYGON': 'usdcpolygon',
+  'OPTIMISM': 'usdcop',
+  'AVALANCHE': 'usdcavaxc',
 };
 
 export class ChangeNowClient {
