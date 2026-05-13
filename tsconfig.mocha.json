@@ -7,7 +7,7 @@
     "skipLibCheck": true,
     "strict": false,
     "noImplicitAny": false,
-    "suppressImplicitAnyIndexErrors": true,
+    "strictNullChecks": false,
     "resolveJsonModule": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]

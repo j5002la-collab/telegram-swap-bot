@@ -9,11 +9,15 @@ import { swapCommand, handleSwapDirection, handleSwapAmount, handleSwapConfirm }
 import { ratesCommand, handleRefreshRates } from './commands/rates';
 import { raffleCommand, handleRaffleWinners } from './commands/raffle';
 import { adminCommand, handleAdminForceRaffle } from './commands/admin';
+import { rateLimitMiddleware } from './middleware/rate-limit';
+import { errorMiddleware } from './middleware/error';
 
 export function createBot(): Telegraf<Context> {
   const bot = new Telegraf<Context>(config.botToken);
 
-  // Global middleware
+  // Global middleware (order matters: rate-limit → error → user)
+  bot.use(rateLimitMiddleware);
+  bot.use(errorMiddleware);
   bot.use(userMiddleware);
 
   // Commands
