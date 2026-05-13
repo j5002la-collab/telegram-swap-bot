@@ -62,6 +62,16 @@ function decodeInvoiceAmount(invoice: string): number | null {
 }
 
 // ============================================================
+
+// ============================================================
+// Cancel — force clear session
+// ============================================================
+export async function cancelCommand(ctx: Context): Promise<void> {
+  clearSs(ctx);
+  await ctx.reply('Sesion cancelada. Usa /swap para empezar de nuevo.');
+}
+
+// ============================================================
 // Step 1: Currency
 // ============================================================
 export async function swapCommand(ctx: Context): Promise<void> {
@@ -373,6 +383,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
       }
       setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId!), 30 * 60 * 1000);
       clearSs(ctx);
+      await ctx.reply('Usa /swap para un nuevo intercambio.');
 
     } catch (error) {
       logger.error('Swap creation failed', { error, swapId });
