@@ -257,16 +257,23 @@ export async function handleSwapAddress(ctx: Context): Promise<void> {
 
   const raw = ctx.message.text.trim();
   if (!raw || raw.length < 10) {
-    await ctx.reply('Direccion muy corta. Intenta de nuevo.');
+    await ctx.reply('Direccion muy corta. Pega tu invoice Lightning (lnbc...) o direccion BTC (bc1...).');
     return;
   }
 
-  s.destAddress = raw;
-  s.step = 'amount';
-  setSs(ctx, s);
+  try {
+    s.destAddress = raw;
+    s.step = 'amount';
+    setSs(ctx, s);
+    logger.info('Address saved', { addr: raw.slice(0, 20) + '...' });
+  } catch (err) {
+    logger.error('Failed to save address', { error: err });
+    await ctx.reply('Error al guardar la direccion. Intenta de nuevo.');
+    return;
+  }
 
   await ctx.reply(
-    'Direccion guardada. Ingresa el monto en USD:\nEjemplo: 100 ($100)\nMin: 10 | Max: 25,000',
+    'Direccion guardada. Ahora ingresa el monto en USD:\nEjemplo: 100 ($100 USD)\n\nResponde con el numero.',
     Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
   );
 }
