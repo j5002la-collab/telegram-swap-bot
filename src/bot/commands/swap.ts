@@ -182,11 +182,17 @@ export async function handleSwapDirection(ctx: Context): Promise<void> {
     // Reverse o USDT/USDC: solo necesita monto
     s.step = 'amount';
     setSs(ctx, s);
-    const label = s.currency === 'BTC' ? 'sats' : s.currency || 'sats';
-    await ctx.editMessageText(
-      'Ingresa el monto (' + label + '):\nMin: 25,000 | Max: 25,000,000',
-      Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
-    );
+    if (s.currency === 'BTC') {
+      await ctx.editMessageText(
+        'Ingresa el monto en sats:\nMin: 25,000 | Max: 25,000,000',
+        Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
+      );
+    } else {
+      await ctx.editMessageText(
+        'Ingresa el monto en USD:\nEjemplo: 100 (equivale a 100 ' + (s.currency || 'USDT') + ')\nMin: 10 | Max: 25,000',
+        Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
+      );
+    }
   }
 }
 
@@ -234,10 +240,15 @@ export async function handleSwapAmount(ctx: Context): Promise<void> {
   const raw = ctx.message.text.trim();
   if (raw.startsWith('lnbc') || raw.startsWith('lntb') || raw.startsWith('lnbcrt')) return;
 
-  const amount = parseInt(raw, 10);
+  let amount = parseInt(raw, 10);
   if (isNaN(amount) || amount <= 0) {
-    await ctx.reply('Monto invalido. Solo numeros enteros.');
+    await ctx.reply('Monto invalido. Solo numeros.');
     return;
+  }
+
+  // USDT/USDC: user enters dollars, convert to cents (smallest unit)
+  if (s.currency !== 'BTC') {
+    amount = amount * 100;
   }
 
   await processAmount(ctx, amount);
@@ -254,15 +265,20 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
       minAmount: 25000, maxAmount: 25000000, pairHash: '',
     });
 
-    if (amount < 25000) { await ctx.reply('Monto muy bajo. Minimo 25,000.'); return; }
-    if (amount > 25000000) { await ctx.reply('Monto muy alto. Maximo 25,000,000.'); return; }
+    const isBTC = s.currency === 'BTC';
+    const minAmt = isBTC ? 25000 : 1000; // 1000 cents = $10 min for USDT/USDC
+    const maxAmt = isBTC ? 25000000 : 2500000; // $25,000 max
+    const unit = isBTC ? 'sats' : 'cents';
+
+    if (amount < minAmt) { await ctx.reply('Monto muy bajo. Minimo ' + minAmt.toLocaleString() + ' ' + unit + '.'); return; }
+    if (amount > maxAmt) { await ctx.reply('Monto muy alto. Maximo ' + maxAmt.toLocaleString() + ' ' + unit + '.'); return; }
 
     s.sourceAmount = amount;
     s.fee = fee;
     s.step = 'confirm';
     setSs(ctx, s);
 
-    const msg = commissionEngine.formatBreakdown(fee, 'sats', 'sats');
+    const msg = commissionEngine.formatBreakdown(fee, unit, unit);
 
     await ctx.reply(msg, Markup.inlineKeyboard([
       [Markup.button.callback('Confirmar', 'swap_confirm'), Markup.button.callback('Cancelar', 'swap_cancel')],
