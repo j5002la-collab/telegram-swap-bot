@@ -10,6 +10,7 @@ import { boltzClient } from '../../boltz/client';
 import { BoltzWebSocket } from '../../boltz/websocket';
 import { getCNClient } from '../../changenow/client';
 import type { BoltzSwapStatus } from '../../boltz/types';
+import bolt11 from 'bolt11';
 import crypto from 'crypto';
 
 // --- Global state ---
@@ -22,7 +23,7 @@ export function setSwapState(state: { bot?: Telegraf<Context>; ws?: BoltzWebSock
 }
 
 interface SwapSession {
-  step: 'currency' | 'network' | 'direction' | 'invoice';
+  step: 'currency' | 'network' | 'direction' | 'invoice' | 'amount' | 'confirm';
   currency?: 'BTC' | 'USDT' | 'USDC';
   sourceChain?: ChainNetwork;
   destChain?: ChainNetwork;
@@ -41,6 +42,24 @@ function clearSs(ctx: Context): void { sessions.delete(String(ctx.from?.id)); }
 
 const SWAP_ERROR = 'Error al crear el intercambio. Intenta de nuevo en unos minutos con /swap.';
 
+/** Decode amount in sats from a BOLT11 Lightning invoice. Returns null if no amount. */
+function decodeInvoiceAmount(invoice: string): number | null {
+  try {
+    const decoded = bolt11.decode(invoice);
+    // Amount is in millisatoshis, convert to sats
+    if (decoded.millisatoshis) {
+      return Math.floor(Number(decoded.millisatoshis) / 1000);
+    }
+    // Some invoices have amount in the HRP prefix (lnbc300u = 30000 sats)
+    if (decoded.satoshis) {
+      return Number(decoded.satoshis);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ============================================================
 // Step 1: Currency
 // ============================================================
@@ -52,7 +71,6 @@ export async function swapCommand(ctx: Context): Promise<void> {
   const buttons: ReturnType<typeof Markup.button.callback>[][] = [
     [Markup.button.callback('BTC (On-chain <-> Lightning)', 'swap_cur_BTC')],
   ];
-
   if (hasCN) {
     buttons.push([Markup.button.callback('USDT -> BTC', 'swap_cur_USDT')]);
     buttons.push([Markup.button.callback('USDC -> BTC', 'swap_cur_USDC')]);
@@ -60,7 +78,6 @@ export async function swapCommand(ctx: Context): Promise<void> {
     buttons.push([Markup.button.callback('USDT -> BTC (sin API key)', 'swap_cur_disabled')]);
     buttons.push([Markup.button.callback('USDC -> BTC (sin API key)', 'swap_cur_disabled')]);
   }
-
   buttons.push([Markup.button.callback('Cancelar', 'swap_cancel')]);
   await ctx.reply('Selecciona la moneda:', Markup.inlineKeyboard(buttons));
 }
@@ -88,7 +105,6 @@ export async function handleSwapCurrency(ctx: Context): Promise<void> {
   }
 }
 
-// --- Network menu for USDT/USDC ---
 async function showNetworkMenu(ctx: Context, currency: string): Promise<void> {
   const allNets = currency === 'USDT'
     ? [
@@ -114,7 +130,7 @@ async function showNetworkMenu(ctx: Context, currency: string): Promise<void> {
 
   const buttons = allNets.map(n => [Markup.button.callback(n.label + ' - ' + n.fee, 'swap_net_' + n.net)]);
   buttons.push([Markup.button.callback('Cancelar', 'swap_cancel')]);
-  await ctx.editMessageText(currency + ' -> Selecciona la red:', Markup.inlineKeyboard(buttons));
+  await ctx.editMessageText(currency + ' -> Selecciona la red con menor fee:', Markup.inlineKeyboard(buttons));
 }
 
 export async function handleSwapNetwork(ctx: Context): Promise<void> {
@@ -152,41 +168,58 @@ export async function handleSwapDirection(ctx: Context): Promise<void> {
   s.destChain = dir === 'LN2ONCHAIN' ? 'BTC' : 'LIGHTNING';
 
   if (s.currency === 'BTC' && dir === 'ONCHAIN2LN') {
+    // Submarine: necesita invoice Lightning (con monto incluido!)
     s.step = 'invoice';
     setSs(ctx, s);
     await ctx.editMessageText(
-      'Swap: BTC On-chain -> Lightning\n\nPega tu invoice de Lightning (lnbc...).\nDebe ser valida y no expirar pronto.',
+      'Swap: BTC On-chain -> Lightning\n\n' +
+      'Pega tu invoice de Lightning (lnbc...).\n' +
+      'El monto se detectara automaticamente de la invoice.\n' +
+      'Si la invoice no tiene monto, tienes que ingresarlo manualmente.',
       Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
     );
   } else {
-    s.step = 'direction';
+    // Reverse o USDT/USDC: solo necesita monto
+    s.step = 'amount';
     setSs(ctx, s);
     const label = s.currency === 'BTC' ? 'sats' : s.currency || 'sats';
     await ctx.editMessageText(
-      'Monto a convertir:\nMin: 25,000 | Max: 25,000,000\n\nResponde con el numero (' + label + ').',
+      'Ingresa el monto (' + label + '):\nMin: 25,000 | Max: 25,000,000',
       Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
     );
   }
 }
 
 // ============================================================
-// Step 3: Invoice (submarine only)
+// Step 3: Invoice (submarine) → auto-detect amount
 // ============================================================
 export async function handleSwapInvoice(ctx: Context): Promise<void> {
   if (!ctx.message || !('text' in ctx.message)) return;
   const s = ss(ctx);
-  if (!s || s.step !== 'invoice') return;
+  if (!s || s.step !== 'invoice') return; // Only handle when actively waiting for invoice
 
   const raw = ctx.message.text.trim();
-  if (!raw.startsWith('lnbc') && !raw.startsWith('lntb') && !raw.startsWith('lnbcrt')) {
-    await ctx.reply('Eso no parece una invoice de Lightning. Debe empezar con lnbc...');
-    return;
-  }
+  if (!raw.startsWith('lnbc') && !raw.startsWith('lntb') && !raw.startsWith('lnbcrt')) return;
+
+  // Decode invoice
+  const invoiceAmount = decodeInvoiceAmount(raw);
 
   s.invoice = raw;
-  s.step = 'direction';
   setSs(ctx, s);
-  await ctx.reply('Invoice recibida. Ahora ingresa el monto (sats):', Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]));
+
+  if (invoiceAmount && invoiceAmount > 0) {
+    // Auto-detect amount from invoice → skip to fee breakdown
+    await processAmount(ctx, invoiceAmount);
+  } else {
+    // Invoice has no amount → ask user for amount
+    s.step = 'amount';
+    setSs(ctx, s);
+    await ctx.reply(
+      'Invoice recibida pero no tiene monto incluido.\n\n' +
+      'Ingresa el monto en sats:',
+      Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
+    );
+  }
 }
 
 // ============================================================
@@ -195,14 +228,24 @@ export async function handleSwapInvoice(ctx: Context): Promise<void> {
 export async function handleSwapAmount(ctx: Context): Promise<void> {
   if (!ctx.message || !('text' in ctx.message)) return;
   const s = ss(ctx);
-  if (!s?.direction) return;
+  if (!s || s.step !== 'amount') return; // Only handle when waiting for amount
 
+  // Skip if it looks like an invoice
   const raw = ctx.message.text.trim();
+  if (raw.startsWith('lnbc') || raw.startsWith('lntb') || raw.startsWith('lnbcrt')) return;
+
   const amount = parseInt(raw, 10);
   if (isNaN(amount) || amount <= 0) {
     await ctx.reply('Monto invalido. Solo numeros enteros.');
     return;
   }
+
+  await processAmount(ctx, amount);
+}
+
+async function processAmount(ctx: Context, amount: number): Promise<void> {
+  const s = ss(ctx);
+  if (!s) return;
 
   try {
     const fee = commissionEngine.calculateFeeBreakdown(amount, {
@@ -211,23 +254,21 @@ export async function handleSwapAmount(ctx: Context): Promise<void> {
       minAmount: 25000, maxAmount: 25000000, pairHash: '',
     });
 
+    if (amount < 25000) { await ctx.reply('Monto muy bajo. Minimo 25,000.'); return; }
+    if (amount > 25000000) { await ctx.reply('Monto muy alto. Maximo 25,000,000.'); return; }
+
     s.sourceAmount = amount;
     s.fee = fee;
+    s.step = 'confirm';
     setSs(ctx, s);
 
-    const isBTC = s.currency === 'BTC';
-    const dirLabel = isBTC
-      ? (s.direction === 'ONCHAIN2LN' ? 'On-chain -> Lightning' : 'Lightning -> On-chain')
-      : (s.currency + ' (' + (s.sourceChain || '?') + ') -> ' + (s.destChain === 'LIGHTNING' ? 'Lightning' : 'BTC'));
-    const netInfo = s.sourceChain ? ' - Red: ' + s.sourceChain + ' -> ' + (s.destChain || 'BTC') : '';
-
-    const msg = dirLabel + netInfo + '\n\n' + commissionEngine.formatBreakdown(fee, 'sats', 'sats');
+    const msg = commissionEngine.formatBreakdown(fee, 'sats', 'sats');
 
     await ctx.reply(msg, Markup.inlineKeyboard([
       [Markup.button.callback('Confirmar', 'swap_confirm'), Markup.button.callback('Cancelar', 'swap_cancel')],
     ]));
   } catch (error) {
-    logger.error('Rate error', { error });
+    logger.error('Process amount error', { error });
     await ctx.reply(SWAP_ERROR);
   }
 }
@@ -252,27 +293,27 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
 
   await ctx.editMessageText('Creando intercambio...');
 
-  // === BTC ROUTE: Boltz (non-custodial) ===
+  // === BTC ROUTE ===
   if (s.currency === 'BTC') {
     try {
       const isReverse = s.direction === 'LN2ONCHAIN';
-      let boltzSwapId: string;
+      let swapServiceId: string;
 
       if (isReverse) {
         const preimage = crypto.randomBytes(32);
-        const preimageHash = crypto.createHash('sha256').update(preimage).digest('hex');
+        const key = crypto.randomBytes(32).toString('hex');
         const res = await boltzClient.createReverseSwap({
           from: 'BTC', to: 'BTC', invoiceAmount: s.sourceAmount,
-          claimPublicKey: crypto.randomBytes(32).toString('hex'), preimageHash,
+          claimPublicKey: key,
+          preimageHash: crypto.createHash('sha256').update(preimage).digest('hex'),
         });
-        boltzSwapId = res.id;
+        swapServiceId = res.id;
         await ctx.editMessageText(
-          'Intercambio creado (Lightning -> On-chain)\n\n' +
-          'ID: ' + boltzSwapId + '\n\n' +
+          'Intercambio creado! (Lightning -> On-chain)\n\n' +
           'Paga esta invoice desde tu wallet Lightning:\n\n' +
           '`' + res.invoice + '`\n\n' +
-          'Monto: ' + s.sourceAmount.toLocaleString() + ' sats\n\n' +
-          'Al pagar, el intercambio se completa automaticamente. Tiempo estimado: 1-5 min.',
+          'Monto: ' + s.sourceAmount.toLocaleString() + ' sats\n' +
+          'Al pagar, se completa solo. Tiempo: 1-5 min.',
         );
       } else {
         if (!s.invoice) { await ctx.editMessageText('Falta la invoice. Usa /swap.'); clearSs(ctx); return; }
@@ -280,31 +321,29 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
           from: 'BTC', to: 'BTC', invoice: s.invoice,
           refundPublicKey: crypto.randomBytes(32).toString('hex'),
         });
-        boltzSwapId = res.id;
+        swapServiceId = res.id;
         await ctx.editMessageText(
-          'Intercambio creado (On-chain -> Lightning)\n\n' +
-          'ID: ' + boltzSwapId + '\n\n' +
+          'Intercambio creado! (On-chain -> Lightning)\n\n' +
           'Envia exactamente ' + res.expectedAmount.toLocaleString() + ' sats a:\n\n' +
           '`' + res.address + '`\n\n' +
-          'Al confirmarse, recibiras los sats en Lightning. Tiempo: 10-30 min.',
+          'Al confirmarse, se envia a tu Lightning. Tiempo: 10-30 min.',
         );
       }
 
-      // WebSocket monitoring
       if (boltzWebSocket && chatId && messageId) {
-        boltzWebSocket.subscribe(boltzSwapId, (_id, status) => {
-          updateSwapMessage(chatId, messageId, status, swapId, s, boltzSwapId, userState?.userId).catch(() => {});
+        boltzWebSocket.subscribe(swapServiceId, (_id, status) => {
+          updateSwapMessage(chatId, messageId, status, swapId, s, swapServiceId, userState?.userId).catch(() => {});
         });
       }
-      setTimeout(() => boltzWebSocket?.unsubscribe(boltzSwapId!), 30 * 60 * 1000);
+      setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId!), 30 * 60 * 1000);
 
     } catch (error) {
       logger.error('Swap creation failed', { error, swapId });
       const errMsg = error instanceof Error ? error.message : '';
       await ctx.editMessageText(
         'No se pudo crear el intercambio.\n\n' +
-        (errMsg.includes('invoice') ? 'La invoice no es valida. Asegurate que sea una invoice Lightning real.\n\n' : '') +
-        (errMsg.includes('pair') ? 'Este par no esta disponible ahora.\n\n' : '') +
+        (errMsg.includes('invoice') ? 'La invoice no es valida.\n\n' : '') +
+        (errMsg.includes('pair') ? 'Par no disponible.\n\n' : '') +
         'Intenta de nuevo con /swap.',
       );
       clearSs(ctx);
@@ -312,23 +351,19 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
     return;
   }
 
-  // === USDT/USDC ROUTE: ChangeNOW (custodial exchange) ===
+  // === USDT/USDC ROUTE: ChangeNOW ===
   const cnClient = getCNClient();
   if (!cnClient) {
-    await ctx.editMessageText('Cambios USDT/USDC no configurados.\n\nSe necesita una API key de cambio.');
+    await ctx.editMessageText('Cambios USDT/USDC no configurados.');
     clearSs(ctx); return;
   }
 
   try {
     const ticker = cnClient.getTicker(s.currency as 'USDT' | 'USDC', s.sourceChain || 'TRC-20');
-    if (!ticker) {
-      await ctx.editMessageText('Red no soportada: ' + (s.sourceChain || '?'));
-      clearSs(ctx); return;
-    }
+    if (!ticker) { await ctx.editMessageText('Red no soportada.'); clearSs(ctx); return; }
 
     const toCurrency = s.destChain === 'LIGHTNING' ? 'btcln' : 'btc';
-    const fromAmount = String(s.sourceAmount / 100); // Convert cents to USDT/USDC
-
+    const fromAmount = String(s.sourceAmount / 100);
     const estimate = await cnClient.estimate(ticker, toCurrency, fromAmount);
 
     const exchange = await cnClient.createExchange({
@@ -339,24 +374,16 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
     });
 
     await ctx.editMessageText(
-      'Intercambio creado\n\n' +
-      'ID: ' + exchange.id + '\n\n' +
+      'Intercambio creado!\n\n' +
       'Envia ' + fromAmount + ' ' + (s.currency || 'USDT') + ' (' + (s.sourceChain || '') + ') a:\n\n' +
       '`' + exchange.payinAddress + '`\n\n' +
-      'Recibiras: ~' + estimate.estimatedAmount + ' ' + toCurrency.toUpperCase() + '\n\n' +
-      'Al confirmar el deposito, se envia automaticamente.',
+      'Recibiras: ~' + estimate.estimatedAmount + ' ' + toCurrency.toUpperCase() + '\n' +
+      'Al confirmar, se envia automaticamente.',
     );
 
   } catch (error) {
     logger.error('ChangeNOW swap failed', { error, swapId });
-    await ctx.editMessageText(
-      'No se pudo crear el intercambio.\n\n' +
-      'Verifica que:\n' +
-      '- La API key de ChangeNOW sea valida\n' +
-      '- Haya liquidez en el par ' + (s.currency || '?') + '/' + 'BTC' + '\n' +
-      '- El monto este dentro de los limites\n\n' +
-      'Intenta de nuevo con /swap.',
-    );
+    await ctx.editMessageText('No se pudo crear el intercambio. Intenta de nuevo con /swap.');
     clearSs(ctx);
   }
 }
@@ -373,25 +400,25 @@ async function updateSwapMessage(
   const labels: Record<string, string> = {
     'swap.created': 'Creado. Esperando...',
     'invoice.set': 'Invoice validada.',
-    'transaction.mempool': 'Transaccion detectada en la red.',
-    'transaction.confirmed': 'Confirmada. Procesando pago...',
+    'transaction.mempool': 'Tx detectada en la red.',
+    'transaction.confirmed': 'Confirmada. Procesando...',
     'invoice.pending': 'Pagando invoice...',
     'invoice.paid': 'Invoice pagada. Completando...',
     'transaction.claim.pending': 'Casi listo...',
     'transaction.claimed': 'Completado!',
     'invoice.settled': 'Completado!',
-    'invoice.failedToPay': 'Error: no se pudo pagar la invoice. Fondos reembolsados.',
+    'invoice.failedToPay': 'Error en el pago. Fondos reembolsados.',
     'swap.expired': 'Expiro. Fondos reembolsados.',
-    'transaction.lockupFailed': 'Error en el deposito. Verifica el monto.',
+    'transaction.lockupFailed': 'Error en deposito.',
     'transaction.failed': 'Error. Fondos reembolsados.',
-    'transaction.refunded': 'Fondos reembolsados.',
+    'transaction.refunded': 'Reembolsado.',
   };
 
   const msg = labels[status] || ('Estado: ' + status);
 
   try {
     await botInstance.telegram.editMessageText(chatId, messageId, undefined,
-      'Swap: ' + swapId + '\nID: ' + swapServiceId + '\n\n' + msg);
+      'Intercambio: ' + swapId + '\n\n' + msg);
 
     if (status === 'transaction.claimed' || status === 'invoice.settled') {
       await Swap.create({

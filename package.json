@@ -1,7 +1,7 @@
 {
   "name": "telegram-swap-bot",
   "version": "0.1.0",
-  "description": "Telegram bot for instant USDT/USDC \u2194 BTC/Lightning swaps via Boltz API",
+  "description": "Telegram bot for instant USDT/USDC ↔ BTC/Lightning swaps via Boltz API",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "axios": "^1.15.0",
+    "bolt11": "^1.4.1",
     "dotenv": "^16.0.0",
     "mongoose": "^8.17.1",
     "node-schedule": "^2.1.0",
