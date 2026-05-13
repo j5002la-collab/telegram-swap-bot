@@ -22,6 +22,8 @@ services:
       - BOLTZ_API_URL=${BOLTZ_API_URL:-https://api.boltz.exchange}
       - COMMISSION_RATE=${COMMISSION_RATE:-2.5}
       - ADMIN_IDS=${ADMIN_IDS}
+      - WALLET_LIGHTNING_ADDRESS=${WALLET_LIGHTNING_ADDRESS}
+      - WALLET_BTC_ADDRESS=${WALLET_BTC_ADDRESS:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - TZ=UTC
 
