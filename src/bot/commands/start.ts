@@ -3,8 +3,8 @@ import { getUserState } from '../middleware/user';
 import { showHelp } from './showHelp';
 import { commissionEngine } from '../../engine/commission';
 import { swapCommand } from './swap';
+import { calcCommand } from './calc';
 import { raffleCommand } from './raffle';
-import { ratesCommand } from './rates';
 
 export async function startCommand(ctx: Context): Promise<void> {
   const firstName = ctx.from?.first_name || 'User';
@@ -12,24 +12,18 @@ export async function startCommand(ctx: Context): Promise<void> {
   const username = userState?.username || firstName;
   const rate = commissionEngine.getCommissionRate();
 
-  const welcomeMessage = `🤖 Bienvenido, ${username}!
-
-Soy SwapBot, tu intermediario para intercambios instantáneos de USDT/USDC ↔ BTC/Lightning.
-
-📍 No-custodial — Nunca retengo tus fondos
-⚡ Instantáneo — Swaps en 1-5 minutos
-💸 Comisión — ${rate}% (configurable 1.5% - 2.5%)
-🎁 Sorteo semanal — 0.1% del volumen
-
-Selecciona una opción para empezar:`;
+  const welcomeMessage = 'SwapBot — Cambios instantaneos BTC/Lightning\n\n' +
+    'Comision: ' + rate + '% (configurable 1.5%-2.5%)\n' +
+    'Sorteo semanal: 0.1% del volumen\n\n' +
+    'Selecciona una opcion:';
 
   const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('🔄 Iniciar Swap', 'start_swap')],
+    [Markup.button.callback('Iniciar Swap', 'start_swap')],
     [
-      Markup.button.callback('📊 Tasas', 'show_rates'),
-      Markup.button.callback('🎁 Sorteo', 'show_raffle'),
+      Markup.button.callback('Calculadora', 'show_calc'),
+      Markup.button.callback('Sorteo', 'show_raffle'),
     ],
-    [Markup.button.callback('❓ Ayuda', 'show_help')],
+    [Markup.button.callback('Ayuda', 'show_help')],
   ]);
 
   await ctx.reply(welcomeMessage, keyboard);
@@ -45,9 +39,9 @@ export async function handleStartCallback(ctx: Context): Promise<void> {
       await ctx.answerCbQuery();
       await swapCommand(ctx);
       break;
-    case 'show_rates':
+    case 'show_calc':
       await ctx.answerCbQuery();
-      await ratesCommand(ctx);
+      await calcCommand(ctx);
       break;
     case 'show_raffle':
       await ctx.answerCbQuery();
