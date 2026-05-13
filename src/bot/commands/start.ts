@@ -4,6 +4,7 @@ import { showHelp } from './showHelp';
 import { commissionEngine } from '../../engine/commission';
 import { swapCommand } from './swap';
 import { raffleCommand } from './raffle';
+import { ratesCommand } from './rates';
 
 export async function startCommand(ctx: Context): Promise<void> {
   const firstName = ctx.from?.first_name || 'User';
@@ -46,7 +47,7 @@ export async function handleStartCallback(ctx: Context): Promise<void> {
       break;
     case 'show_rates':
       await ctx.answerCbQuery();
-      await ctx.reply('Usa /rates para ver las tasas en vivo.');
+      await ratesCommand(ctx);
       break;
     case 'show_raffle':
       await ctx.answerCbQuery();
