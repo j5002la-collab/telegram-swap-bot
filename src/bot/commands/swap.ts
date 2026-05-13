@@ -399,7 +399,13 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
 
   } catch (error) {
     logger.error('ChangeNOW swap failed', { error, swapId });
-    await ctx.editMessageText('No se pudo crear el intercambio. Intenta de nuevo con /swap.');
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const detail = errMsg.includes('401') || errMsg.includes('unauthorized')
+      ? 'API key de ChangeNOW no valida. Verifica CHANGENOW_API_KEY en .env'
+      : errMsg.includes('pair') || errMsg.includes('currency')
+        ? 'Par de monedas no disponible ahora.'
+        : 'Error del servicio. Intenta mas tarde.';
+    await ctx.editMessageText('No se pudo crear el intercambio.\n\n' + detail);
     clearSs(ctx);
   }
 }
