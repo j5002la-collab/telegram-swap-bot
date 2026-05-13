@@ -3,7 +3,6 @@ import { rateEngine, RateInfo } from '../../engine/rates';
 import { commissionEngine, FeeBreakdown } from '../../engine/commission';
 import { raffleEngine } from '../../engine/raffle';
 import { treasuryEngine } from '../../engine/treasury';
-import type { CurrencyType } from '../../models';
 import { getUserState } from '../middleware/user';
 import { logger } from '../../utils/logger';
 import { Swap, SwapDirection } from '../../models';
@@ -267,9 +266,12 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
       logger.error('Raffle tracking failed', { error: err });
     });
 
-    // Track treasury earnings
-    const currency: CurrencyType = dirInfo?.sourceCur === 'USDT' ? 'USDT' : dirInfo?.sourceCur === 'USDC' ? 'USDC' : 'BTC';
-    treasuryEngine.trackEarnings(currency, session.fee.commissionAmount).catch((err) => {
+    // Track treasury earnings — all commissions go to BTC/Lightning
+    // USDT/USDC commissions are converted to sats equivalent for tracking
+    const commissionInSats = dirInfo?.sourceCur === 'BTC'
+      ? session.fee.commissionAmount
+      : Math.floor(session.fee.commissionAmount * 100); // rough sats equiv for USDT/USDC cents
+    treasuryEngine.trackEarnings(commissionInSats).catch((err) => {
       logger.error('Treasury tracking failed', { error: err });
     });
 
