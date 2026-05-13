@@ -5,7 +5,7 @@ import { logger } from '../utils/logger';
 import { userMiddleware } from './middleware/user';
 import { startCommand, handleStartCallback } from './commands/start';
 import { helpCommand } from './commands/help';
-import { swapCommand, handleSwapDirection, handleSwapAmount, handleSwapConfirm } from './commands/swap';
+import { swapCommand, handleSwapCurrency, handleSwapNetwork, handleSwapDirection, handleSwapAmount, handleSwapConfirm } from './commands/swap';
 import { calcCommand, handleCalcText } from './commands/calc';
 import { raffleCommand, handleRaffleWinners } from './commands/raffle';
 import { adminCommand, handleAdminForceRaffle } from './commands/admin';
@@ -28,7 +28,9 @@ export function createBot(): Telegraf<Context> {
   bot.command('raffle', raffleCommand);
   bot.command('admin', adminCommand);
 
-  // Callback handlers
+  // Callback handlers — swap flow
+  bot.action(/^swap_cur_/, handleSwapCurrency);
+  bot.action(/^swap_net_/, handleSwapNetwork);
   bot.action(/^swap_dir_/, handleSwapDirection);
   bot.action(/^swap_confirm$|^swap_cancel$/, handleSwapConfirm);
   bot.action('raffle_winners', handleRaffleWinners);

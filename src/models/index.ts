@@ -8,7 +8,7 @@ import { Treasury } from './Treasury';
 
 export { User, Swap, Raffle, Treasury };
 export type { IUser } from './User';
-export type { ISwap, SwapDirection, SwapStatus } from './Swap';
+export type { ISwap, SwapDirection, SwapStatus, ChainNetwork, SwapCurrency } from './Swap';
 export type { IRaffle } from './Raffle';
 export type { ITreasury } from './Treasury';
 
