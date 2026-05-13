@@ -11,6 +11,8 @@ export interface Config {
   logLevel: string;
   /** Enable Boltz Pro (dynamic fees based on liquidity) */
   boltzProEnabled: boolean;
+  /** ChangeNOW API key for USDT/USDC swaps */
+  changenowApiKey: string;
   /** Lightning address where all commissions go (e.g. admin@getalby.com) */
   lightningAddress: string;
   /** BTC on-chain address as fallback */
@@ -40,6 +42,8 @@ export function loadConfig(): Config {
     logLevel: process.env.LOG_LEVEL || 'info',
     /** Enable Boltz Pro for better rates on unbalanced liquidity */
     boltzProEnabled: process.env.BOLTZ_PRO_ENABLED !== 'false', // default: on
+    /** ChangeNOW API key for USDT/USDC swaps */
+    changenowApiKey: process.env.CHANGENOW_API_KEY || '',
     lightningAddress: process.env.WALLET_LIGHTNING_ADDRESS || '',
     btcAddress: process.env.WALLET_BTC_ADDRESS || '',
   };

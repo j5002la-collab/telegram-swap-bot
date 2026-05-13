@@ -8,6 +8,7 @@ import { logger } from '../../utils/logger';
 import { Swap, SwapDirection, ChainNetwork } from '../../models';
 import { boltzClient } from '../../boltz/client';
 import { BoltzWebSocket } from '../../boltz/websocket';
+import { getCNClient } from '../../changenow/client';
 import type { BoltzSwapStatus } from '../../boltz/types';
 import crypto from 'crypto';
 
@@ -51,10 +52,16 @@ export async function swapCommand(ctx: Context): Promise<void> {
   clearSs(ctx);
   setSs(ctx, { step: 'currency' });
 
+  const hasCN = getCNClient() !== null;
+
   const buttons: ReturnType<typeof Markup.button.callback>[][] = [
     [Markup.button.callback('BTC (On-chain <-> Lightning)', 'swap_cur_BTC')],
-    [Markup.button.callback('USDT -> BTC (Proximamente)', 'swap_cur_disabled')],
-    [Markup.button.callback('USDC -> BTC (Proximamente)', 'swap_cur_disabled')],
+    [
+      Markup.button.callback(hasCN ? 'USDT -> BTC' : 'USDT -> BTC (Proximamente)', hasCN ? 'swap_cur_USDT' : 'swap_cur_disabled'),
+    ],
+    [
+      Markup.button.callback(hasCN ? 'USDC -> BTC' : 'USDC -> BTC (Proximamente)', hasCN ? 'swap_cur_USDC' : 'swap_cur_disabled'),
+    ],
     [Markup.button.callback('Cancelar', 'swap_cancel')],
   ];
 
