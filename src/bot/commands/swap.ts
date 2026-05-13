@@ -34,7 +34,7 @@ function clearSession(ctx: Context): void {
 }
 
 // --- Direction labels and mapping ---
-type DirectionKey = 'usdt2btc' | 'btc2usdt' | 'usdc2btc' | 'btc2usdc';
+type DirectionKey = 'onchain2ln' | 'ln2onchain';
 
 const DIRECTION_MAP: Record<DirectionKey, {
   direction: SwapDirection;
@@ -43,10 +43,8 @@ const DIRECTION_MAP: Record<DirectionKey, {
   destCur: string;
   emoji: string;
 }> = {
-  usdt2btc: { direction: 'USDT2BTC', label: 'USDT → BTC (Lightning)', sourceCur: 'USDT', destCur: 'BTC', emoji: '💎' },
-  btc2usdt: { direction: 'BTC2USDT', label: 'BTC (Lightning) → USDT', sourceCur: 'BTC', destCur: 'USDT', emoji: '₿' },
-  usdc2btc: { direction: 'USDC2BTC', label: 'USDC → BTC (Lightning)', sourceCur: 'USDC', destCur: 'BTC', emoji: '💵' },
-  btc2usdc: { direction: 'BTC2USDC', label: 'BTC (Lightning) → USDC', sourceCur: 'BTC', destCur: 'USDC', emoji: '₿' },
+  onchain2ln: { direction: 'ONCHAIN2LN', label: 'BTC On-chain → Lightning', sourceCur: 'BTC', destCur: 'BTC', emoji: '₿' },
+  ln2onchain: { direction: 'LN2ONCHAIN', label: 'Lightning → BTC On-chain', sourceCur: 'BTC', destCur: 'BTC', emoji: '⚡' },
 };
 
 // --- Step 1: /swap command — select direction ---
@@ -55,14 +53,12 @@ export async function swapCommand(ctx: Context): Promise<void> {
   setSession(ctx, {});
 
   const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('💎 USDT → BTC (Lightning)', 'swap_dir_usdt2btc')],
-    [Markup.button.callback('₿ BTC (Lightning) → USDT', 'swap_dir_btc2usdt')],
-    [Markup.button.callback('💵 USDC → BTC (Lightning)', 'swap_dir_usdc2btc')],
-    [Markup.button.callback('₿ BTC (Lightning) → USDC', 'swap_dir_btc2usdc')],
+    [Markup.button.callback('₿ BTC On-chain → Lightning', 'swap_dir_onchain2ln')],
+    [Markup.button.callback('⚡ Lightning → BTC On-chain', 'swap_dir_ln2onchain')],
     [Markup.button.callback('❌ Cancelar', 'swap_cancel')],
   ]);
 
-  await ctx.replyWithMarkdownV2(
+  await ctx.reply(
     '🔄 *¿Qué quieres convertir\\?*\n\nSelecciona la dirección del swap:',
     keyboard,
   );
@@ -102,7 +98,7 @@ export async function handleSwapDirection(ctx: Context): Promise<void> {
     `Mín: ${minLabel}\n` +
     `Máx: ${maxLabel}\n\n` +
     `Responde directamente con el número \\(solo números, sin comas ni puntos\\)`,
-    { parse_mode: 'MarkdownV2', reply_markup: keyboard.reply_markup },
+    keyboard,
   );
 }
 
@@ -117,7 +113,7 @@ export async function handleSwapAmount(ctx: Context): Promise<void> {
   const parsedAmount = parseInt(rawAmount, 10);
 
   if (isNaN(parsedAmount) || parsedAmount <= 0) {
-    await ctx.replyWithMarkdownV2(
+    await ctx.reply(
       '⚠️ *Monto inválido\\.*\n\nPor favor ingresa solo números enteros \\(ej: 50000\\)\\.\nLos montos son en la unidad más pequeña \\(sats para BTC, centavos para USDT/USDC\\)\\.',
     );
     return;
@@ -149,7 +145,7 @@ export async function handleSwapAmount(ctx: Context): Promise<void> {
     const rateInfo = await rateEngine.getRate(swapType, fromCur, toCur);
 
     if (!rateInfo) {
-      await ctx.replyWithMarkdownV2(
+      await ctx.reply(
         '⚠️ *No se pudieron obtener las tasas\\.*\n\nEl servicio de Boltz puede estar temporalmente no disponible\\. Intenta de nuevo en unos minutos\\.',
       );
       return;
@@ -157,14 +153,14 @@ export async function handleSwapAmount(ctx: Context): Promise<void> {
 
     // Validate amount against limits
     if (parsedAmount < rateInfo.minAmount) {
-      await ctx.replyWithMarkdownV2(
+      await ctx.reply(
         `⚠️ *Monto muy bajo\\.*\n\nEl monto mínimo es ${rateInfo.minAmount.toLocaleString()} sats/cents\\.`,
       );
       return;
     }
 
     if (parsedAmount > rateInfo.maxAmount) {
-      await ctx.replyWithMarkdownV2(
+      await ctx.reply(
         `⚠️ *Monto muy alto\\.*\n\nEl monto máximo es ${rateInfo.maxAmount.toLocaleString()} sats/cents\\.`,
       );
       return;
@@ -192,10 +188,10 @@ export async function handleSwapAmount(ctx: Context): Promise<void> {
       ],
     ]);
 
-    await ctx.replyWithMarkdownV2(message, keyboard);
+    await ctx.reply(message, keyboard);
   } catch (error) {
     logger.error('Rate fetch failed in swap', { error });
-    await ctx.replyWithMarkdownV2(
+    await ctx.reply(
       '❌ *Error al obtener tasas\\.*\n\nIntenta de nuevo en unos minutos\\.',
     );
   }
@@ -220,7 +216,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
     return;
   }
 
-  await ctx.editMessageText('⏳ *Procesando tu swap\\.\\.\\.*\n\nEsto puede tomar 1\\-5 minutos\\.', { parse_mode: 'MarkdownV2' });
+  await ctx.editMessageText('⏳ *Procesando tu swap\\.\\.\\.*\n\nEsto puede tomar 1\\-5 minutos\\.');
 
   // Generate swap ID
   const swapId = `SWAP-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
@@ -282,7 +278,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
       `Monto: ${commissionEngine.formatAmount(session.sourceAmount, dirInfo?.sourceCur || 'BTC')}\n` +
       `Comisión SwapBot: ${commissionEngine.formatAmount(session.fee.commissionAmount, dirInfo?.sourceCur || 'BTC')}`;
 
-    await ctx.editMessageText(successMsg, { parse_mode: 'MarkdownV2' });
+    await ctx.editMessageText(successMsg);
   } catch (error) {
     logger.error('Swap execution failed', { error, swapId });
     await ctx.editMessageText(

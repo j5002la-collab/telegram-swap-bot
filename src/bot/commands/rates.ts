@@ -4,10 +4,9 @@ import { commissionEngine } from '../../engine/commission';
 import { logger } from '../../utils/logger';
 
 const DISPLAY_PAIRS = [
-  { label: 'USDT → BTC (Lightning)', from: 'USDT', to: 'BTC', swapType: 'submarine' as const, emoji: '💎' },
-  { label: 'BTC (Lightning) → USDT', from: 'BTC', to: 'USDT', swapType: 'reverse' as const, emoji: '₿' },
-  { label: 'USDC → BTC (Lightning)', from: 'USDC', to: 'BTC', swapType: 'submarine' as const, emoji: '💵' },
-  { label: 'BTC (Lightning) → USDC', from: 'BTC', to: 'USDC', swapType: 'reverse' as const, emoji: '₿' },
+  { label: 'BTC On-chain → Lightning', from: 'BTC', to: 'BTC', swapType: 'submarine' as const, emoji: '₿' },
+  { label: 'Lightning → BTC On-chain', from: 'BTC', to: 'BTC', swapType: 'reverse' as const, emoji: '⚡' },
+  { label: 'L-BTC → Lightning', from: 'L-BTC', to: 'BTC', swapType: 'submarine' as const, emoji: '🌊' },
 ];
 
 export async function ratesCommand(ctx: Context): Promise<void> {
@@ -44,7 +43,7 @@ export async function ratesCommand(ctx: Context): Promise<void> {
     // Ignore if message can't be deleted
   }
 
-  await ctx.replyWithMarkdownV2(lines.join('\n'), keyboard);
+  await ctx.reply(lines.join('\n'), keyboard);
 }
 
 export async function handleRefreshRates(ctx: Context): Promise<void> {
@@ -76,5 +75,5 @@ export async function handleRefreshRates(ctx: Context): Promise<void> {
     [Markup.button.callback('🔄 Iniciar swap', 'start_swap')],
   ]);
 
-  await ctx.editMessageText(lines.join('\n'), { parse_mode: 'MarkdownV2', reply_markup: keyboard.reply_markup });
+  await ctx.editMessageText(lines.join('\n'), keyboard);
 }

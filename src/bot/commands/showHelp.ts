@@ -18,5 +18,5 @@ export async function showHelp(ctx: Context): Promise<void> {
 
 *Soporte:* @admin`;
 
-  await ctx.replyWithMarkdownV2(helpMessage);
+  await ctx.reply(helpMessage);
 }
