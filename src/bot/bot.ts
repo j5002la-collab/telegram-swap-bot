@@ -7,6 +7,8 @@ import { startCommand, handleStartCallback } from './commands/start';
 import { helpCommand } from './commands/help';
 import { swapCommand, handleSwapDirection, handleSwapAmount, handleSwapConfirm } from './commands/swap';
 import { ratesCommand, handleRefreshRates } from './commands/rates';
+import { raffleCommand, handleRaffleWinners } from './commands/raffle';
+import { adminCommand, handleAdminForceRaffle } from './commands/admin';
 
 export function createBot(): Telegraf<Context> {
   const bot = new Telegraf<Context>(config.botToken);
@@ -19,15 +21,18 @@ export function createBot(): Telegraf<Context> {
   bot.help(helpCommand);
   bot.command('swap', swapCommand);
   bot.command('rates', ratesCommand);
+  bot.command('raffle', raffleCommand);
+  bot.command('admin', adminCommand);
 
-  // Callback handlers — specific actions first, then catch-all
+  // Callback handlers — specific patterns first, then general
   bot.action(/^swap_dir_/, handleSwapDirection);
   bot.action(/^swap_confirm$|^swap_cancel$/, handleSwapConfirm);
   bot.action('refresh_rates', handleRefreshRates);
+  bot.action('raffle_winners', handleRaffleWinners);
+  bot.action('admin_force_raffle', handleAdminForceRaffle);
   bot.action(/^(start_swap|show_rates|show_raffle|show_help)$/, handleStartCallback);
 
-  // Text handler for swap amount input — only when no command matches
-  // Note: Telegraf processes commands before text, so this catches non-command text
+  // Text handler for swap amount input
   bot.on('text', handleSwapAmount);
 
   // Error handler

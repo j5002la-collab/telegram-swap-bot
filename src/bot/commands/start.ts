@@ -2,6 +2,7 @@ import { Context, Markup } from 'telegraf';
 import { getUserState } from '../middleware/user';
 import { showHelp } from './showHelp';
 import { commissionEngine } from '../../engine/commission';
+import { raffleCommand } from './raffle';
 
 export async function startCommand(ctx: Context): Promise<void> {
   const firstName = ctx.from?.first_name || 'User';
@@ -9,14 +10,14 @@ export async function startCommand(ctx: Context): Promise<void> {
   const username = userState?.username || firstName;
   const rate = commissionEngine.getCommissionRate();
 
-  const welcomeMessage = `🤖 ¡Bienvenido\\, ${username}!
+  const welcomeMessage = `🤖 Bienvenido, ${username}!
 
-Soy SwapBot, tu intermediario para intercambios instantáneos de USDT/USDC ↔ BTC/Lightning\\. 
+Soy SwapBot, tu intermediario para intercambios instantáneos de USDT/USDC ↔ BTC/Lightning.
 
-📍 *No\\-custodial* — Nunca retengo tus fondos
-⚡ *Instantáneo* — Swaps en 1\\-5 minutos
-💸 *Comisión* — ${rate}% \\(configurable 1\\.5% \\- 2\\.5%\\)
-🎁 *Sorteo semanal* — 0\\.1% del volumen
+📍 No-custodial — Nunca retengo tus fondos
+⚡ Instantáneo — Swaps en 1-5 minutos
+💸 Comisión — ${rate}% (configurable 1.5% - 2.5%)
+🎁 Sorteo semanal — 0.1% del volumen
 
 Selecciona una opción para empezar:`;
 
@@ -29,7 +30,7 @@ Selecciona una opción para empezar:`;
     [Markup.button.callback('❓ Ayuda', 'show_help')],
   ]);
 
-  await ctx.replyWithMarkdownV2(welcomeMessage, keyboard);
+  await ctx.reply(welcomeMessage, keyboard);
 }
 
 export async function handleStartCallback(ctx: Context): Promise<void> {
@@ -40,15 +41,15 @@ export async function handleStartCallback(ctx: Context): Promise<void> {
   switch (action) {
     case 'start_swap':
       await ctx.answerCbQuery();
-      await ctx.reply('🔄 Función de swap en construcción\\. Pronto disponible\\.');
+      await ctx.reply('Usa /swap para iniciar un intercambio.');
       break;
     case 'show_rates':
       await ctx.answerCbQuery();
-      await ctx.reply('📊 Tasas en construcción\\. Pronto disponible\\.');
+      await ctx.reply('Usa /rates para ver las tasas en vivo.');
       break;
     case 'show_raffle':
       await ctx.answerCbQuery();
-      await ctx.reply('🎁 Sorteo semanal en construcción\\. Pronto disponible\\.');
+      await raffleCommand(ctx);
       break;
     case 'show_help':
       await ctx.answerCbQuery();
