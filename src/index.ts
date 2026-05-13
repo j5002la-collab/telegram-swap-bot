@@ -4,6 +4,7 @@ import { connectDatabase } from './models';
 import { createBot, launchBot } from './bot/bot';
 import { startRaffleScheduler } from './jobs/raffle-draw';
 import { treasuryEngine } from './engine/treasury';
+import { boltzClient } from './boltz/client';
 import { BoltzWebSocket } from './boltz/websocket';
 
 async function main(): Promise<void> {
@@ -28,6 +29,12 @@ async function main(): Promise<void> {
 
     // Start raffle scheduler (Sundays 23:59 UTC)
     startRaffleScheduler();
+
+    // Enable Boltz Pro if configured (default: on)
+    if (config.boltzProEnabled) {
+      boltzClient.enablePro();
+      logger.info('Boltz Pro enabled (auto from config)');
+    }
 
     // Connect to Boltz WebSocket (for real-time swap monitoring)
     const wsUrl = config.boltzApiUrl.replace('https://', 'wss://').replace('http://', 'ws://') + '/v2/ws';

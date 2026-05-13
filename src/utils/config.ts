@@ -9,6 +9,8 @@ export interface Config {
   commissionRate: number;
   adminIds: number[];
   logLevel: string;
+  /** Enable Boltz Pro (dynamic fees based on liquidity) */
+  boltzProEnabled: boolean;
   /** Lightning address where all commissions go (e.g. admin@getalby.com) */
   lightningAddress: string;
   /** BTC on-chain address as fallback */
@@ -36,6 +38,8 @@ export function loadConfig(): Config {
     commissionRate: parseFloat(process.env.COMMISSION_RATE || '2.5'),
     adminIds: parseAdminIds(process.env.ADMIN_IDS),
     logLevel: process.env.LOG_LEVEL || 'info',
+    /** Enable Boltz Pro for better rates on unbalanced liquidity */
+    boltzProEnabled: process.env.BOLTZ_PRO_ENABLED !== 'false', // default: on
     lightningAddress: process.env.WALLET_LIGHTNING_ADDRESS || '',
     btcAddress: process.env.WALLET_BTC_ADDRESS || '',
   };
