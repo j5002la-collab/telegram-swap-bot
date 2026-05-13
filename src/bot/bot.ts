@@ -5,7 +5,7 @@ import { logger } from '../utils/logger';
 import { userMiddleware } from './middleware/user';
 import { startCommand, handleStartCallback } from './commands/start';
 import { helpCommand } from './commands/help';
-import { swapCommand, handleSwapCurrency, handleSwapNetwork, handleSwapDirection, handleSwapAmount, handleSwapConfirm } from './commands/swap';
+import { swapCommand, handleSwapCurrency, handleSwapNetwork, handleSwapDirection, handleSwapInvoice, handleSwapAmount, handleSwapConfirm } from './commands/swap';
 import { calcCommand, handleCalcText } from './commands/calc';
 import { raffleCommand, handleRaffleWinners } from './commands/raffle';
 import { adminCommand, handleAdminForceRaffle } from './commands/admin';
@@ -41,7 +41,8 @@ export function createBot(boltzWs?: BoltzWebSocket): Telegraf<Context> {
   bot.action('admin_force_raffle', handleAdminForceRaffle);
   bot.action(/^(start_swap|show_calc|show_raffle|show_help)$/, handleStartCallback);
 
-  // Text handler for swap amount + calc input
+  // Text handler — order matters: invoice first, then amount, then calc
+  bot.on('text', handleSwapInvoice);
   bot.on('text', handleSwapAmount);
   bot.on('text', handleCalcText);
 
