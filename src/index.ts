@@ -5,6 +5,7 @@ import { createBot, launchBot } from './bot/bot';
 import { startRaffleScheduler } from './jobs/raffle-draw';
 import { treasuryEngine } from './engine/treasury';
 import { boltzClient } from './boltz/client';
+import { initCNClient } from './changenow/client';
 import { BoltzWebSocket } from './boltz/websocket';
 
 async function main(): Promise<void> {
@@ -34,6 +35,14 @@ async function main(): Promise<void> {
     if (config.boltzProEnabled) {
       boltzClient.enablePro();
       logger.info('Boltz Pro enabled (auto from config)');
+    }
+
+    // Initialize ChangeNOW client for USDT/USDC swaps
+    if (config.changenowApiKey) {
+      initCNClient(config.changenowApiKey);
+      logger.info('ChangeNOW client initialized');
+    } else {
+      logger.warn('CHANGENOW_API_KEY not set — USDT/USDC swaps disabled');
     }
 
     // Connect to Boltz WebSocket (for real-time swap monitoring)
