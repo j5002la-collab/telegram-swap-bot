@@ -1,29 +1,22 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
-export type CurrencyType = 'BTC' | 'USDT' | 'USDC';
-
 export interface ITreasury extends Document {
-  currency: CurrencyType;
-  /** Accumulated earnings in smallest unit (sats or cents) */
+  /** Total accumulated commissions in sats */
   accumulated: number;
-  /** Total withdrawn in smallest unit */
+  /** Total withdrawn in sats */
   withdrawn: number;
-  /** Balance available (accumulated - withdrawn) */
+  /** Available balance in sats */
   balance: number;
-  /** Admin wallet address for this currency */
-  walletAddress: string;
+  /** Lightning address for receiving commissions */
+  lightningAddress: string;
+  /** BTC on-chain fallback address */
+  btcAddress: string;
   createdAt: Date;
   updatedAt: Date;
 }
 
 const treasurySchema = new Schema<ITreasury>(
   {
-    currency: {
-      type: String,
-      required: true,
-      enum: ['BTC', 'USDT', 'USDC'],
-      unique: true,
-    },
     accumulated: {
       type: Number,
       default: 0,
@@ -42,7 +35,11 @@ const treasurySchema = new Schema<ITreasury>(
       min: 0,
       validate: Number.isInteger,
     },
-    walletAddress: {
+    lightningAddress: {
+      type: String,
+      default: '',
+    },
+    btcAddress: {
       type: String,
       default: '',
     },
