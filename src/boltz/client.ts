@@ -13,9 +13,10 @@ import type {
   ChainPairs,
 } from './types';
 
-class BoltzClient {
+export class BoltzClient {
   private http: AxiosInstance;
   private baseUrl: string;
+  private proEnabled = false;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
@@ -26,64 +27,81 @@ class BoltzClient {
     });
   }
 
-  // --- Pairs ---
+  // --- Pro Mode ---
+  enablePro(): void {
+    this.proEnabled = true;
+    logger.info('Boltz Pro mode enabled');
+  }
 
+  disablePro(): void {
+    this.proEnabled = false;
+    logger.info('Boltz Pro mode disabled');
+  }
+
+  isProEnabled(): boolean {
+    return this.proEnabled;
+  }
+
+  private proHeaders(): Record<string, string> {
+    return this.proEnabled ? { Referral: 'pro' } : {};
+  }
+
+  // --- Pairs ---
   async getSubmarinePairs(): Promise<SubmarinePairs> {
-    const { data } = await this.http.get<SubmarinePairs>('/swap/submarine');
+    const { data } = await this.http.get<SubmarinePairs>('/swap/submarine', {
+      headers: this.proHeaders(),
+    });
     return data;
   }
 
   async getReversePairs(): Promise<ReversePairs> {
-    const { data } = await this.http.get<ReversePairs>('/swap/reverse');
+    const { data } = await this.http.get<ReversePairs>('/swap/reverse', {
+      headers: this.proHeaders(),
+    });
     return data;
   }
 
   async getChainPairs(): Promise<ChainPairs> {
-    const { data } = await this.http.get<ChainPairs>('/swap/chain');
+    const { data } = await this.http.get<ChainPairs>('/swap/chain', {
+      headers: this.proHeaders(),
+    });
     return data;
   }
 
-  // --- Submarine Swap (Chain → Lightning) ---
-
-  async createSubmarineSwap(
-    params: SubmarineSwapRequest,
-  ): Promise<SubmarineSwapResponse> {
-    logger.info('Creating submarine swap', { from: params.from, to: params.to });
-    const { data } = await this.http.post<SubmarineSwapResponse>(
-      '/swap/submarine',
-      params,
-    );
-    logger.info('Submarine swap created', { swapId: data.id });
+  // --- Submarine Swap ---
+  async createSubmarineSwap(params: SubmarineSwapRequest): Promise<SubmarineSwapResponse> {
+    const body = this.proEnabled ? { ...params, referralId: 'pro' } : params;
+    logger.info(`Creating submarine swap [pro=${this.proEnabled}]`, { from: params.from, to: params.to });
+    const { data } = await this.http.post<SubmarineSwapResponse>('/swap/submarine', body);
+    logger.info('Submarine swap created', { swapId: data.id, pro: this.proEnabled });
     return data;
   }
 
+  // --- Reverse Swap ---
+  async createReverseSwap(params: ReverseSwapRequest): Promise<ReverseSwapResponse> {
+    const body = this.proEnabled ? { ...params, referralId: 'pro' } : params;
+    logger.info(`Creating reverse swap [pro=${this.proEnabled}]`);
+    const { data } = await this.http.post<ReverseSwapResponse>('/swap/reverse', body);
+    logger.info('Reverse swap created', { swapId: data.id, pro: this.proEnabled });
+    return data;
+  }
+
+  // --- Chain Swap ---
+  async createChainSwap(params: ChainSwapRequest): Promise<ChainSwapResponse> {
+    const body = this.proEnabled ? { ...params, referralId: 'pro' } : params;
+    logger.info(`Creating chain swap [pro=${this.proEnabled}]`);
+    const { data } = await this.http.post<ChainSwapResponse>('/swap/chain', body);
+    return data;
+  }
+
+  // --- Claim details (same endpoints) ---
   async getSubmarineSwapClaimDetails(swapId: string) {
     const { data } = await this.http.get(`/swap/submarine/${swapId}/claim`);
     return data;
   }
 
-  async sendSubmarineSwapClaimSignature(
-    swapId: string,
-    params: { pubNonce: string; partialSignature: string },
-  ) {
-    const { data } = await this.http.post(
-      `/swap/submarine/${swapId}/claim`,
-      params,
-    );
-    return data;
-  }
-
-  // --- Reverse Swap (Lightning → Chain) ---
-
-  async createReverseSwap(
-    params: ReverseSwapRequest,
-  ): Promise<ReverseSwapResponse> {
-    logger.info('Creating reverse swap', { from: params.from, to: params.to });
-    const { data } = await this.http.post<ReverseSwapResponse>(
-      '/swap/reverse',
-      params,
-    );
-    logger.info('Reverse swap created', { swapId: data.id });
+  async sendSubmarineSwapClaimSignature(swapId: string, params: { pubNonce: string; partialSignature: string }) {
+    const { data } = await this.http.post(`/swap/submarine/${swapId}/claim`, params);
     return data;
   }
 
@@ -92,23 +110,8 @@ class BoltzClient {
     return data;
   }
 
-  async sendReverseSwapClaimSignature(
-    swapId: string,
-    params: { preimage: string; pubNonce: string; partialSignature: string },
-  ) {
-    const { data } = await this.http.post(
-      `/swap/reverse/${swapId}/claim`,
-      params,
-    );
-    return data;
-  }
-
-  // --- Chain Swap (Chain ↔ Chain) ---
-
-  async createChainSwap(params: ChainSwapRequest): Promise<ChainSwapResponse> {
-    logger.info('Creating chain swap', { from: params.from, to: params.to });
-    const { data } = await this.http.post<ChainSwapResponse>('/swap/chain', params);
-    logger.info('Chain swap created', { swapId: data.lockupAddress });
+  async sendReverseSwapClaimSignature(swapId: string, params: { preimage: string; pubNonce: string; partialSignature: string }) {
+    const { data } = await this.http.post(`/swap/reverse/${swapId}/claim`, params);
     return data;
   }
 
@@ -117,10 +120,7 @@ class BoltzClient {
     return data;
   }
 
-  // --- General ---
-
   getWebSocketUrl(): string {
-    // WebSocket is on separate port in development, but same host
     const base = this.baseUrl.replace(/\/api$/, '').replace(/:\d+/, '');
     const wsBase = config.boltzApiUrl.startsWith('https')
       ? config.boltzApiUrl.replace('https://', 'wss://')

@@ -5,6 +5,7 @@ import { commissionEngine } from '../../engine/commission';
 import { raffleEngine } from '../../engine/raffle';
 import { forceRaffleDraw } from '../../jobs/raffle-draw';
 import { treasuryEngine } from '../../engine/treasury';
+import { boltzClient } from '../../boltz/client';
 import { Swap, User } from '../../models';
 
 function isAdmin(ctx: Context): boolean {
@@ -193,6 +194,43 @@ async function adminBroadcast(ctx: Context, args: string[]): Promise<void> {
   }
 }
 
+
+
+// --- /admin pro ---
+async function adminPro(ctx: Context, args: string[]): Promise<void> {
+  const sub = args[2] || 'status';
+
+  switch (sub) {
+    case 'on':
+    case 'enable':
+    case '1':
+      boltzClient.enablePro();
+      await ctx.reply(
+        'Boltz Pro ACTIVADO\n\n' +
+        'Los swaps usaran la API de Boltz Pro.\n' +
+        'Cuando la liquidez este desbalanceada,\n' +
+        'los fees bajaran a 0% o negativo.\n\n' +
+        'Esto aumenta el margen del bot.'
+      );
+      break;
+    case 'off':
+    case 'disable':
+    case '0':
+      boltzClient.disablePro();
+      await ctx.reply('Boltz Pro DESACTIVADO. Usando API regular.');
+      break;
+    case 'status':
+    default: {
+      const enabled = boltzClient.isProEnabled();
+      await ctx.reply(
+        'Boltz Pro: ' + (enabled ? 'ACTIVADO' : 'DESACTIVADO') + '\n\n' +
+        '/admin pro on  — Activar\n' +
+        '/admin pro off — Desactivar'
+      );
+    }
+  }
+}
+
 // --- Dispatch ---
 export async function adminCommand(ctx: Context): Promise<void> {
   if (!isAdmin(ctx)) { await unauthorized(ctx); return; }
@@ -210,6 +248,7 @@ export async function adminCommand(ctx: Context): Promise<void> {
     case 'treasury': case 'balance': case 'wallet': await adminTreasury(ctx); break;
     case 'withdraw': await adminWithdraw(ctx, parts); break;
     case 'broadcast': await adminBroadcast(ctx, parts); break;
+    case 'pro': await adminPro(ctx, parts); break;
     default:
       await ctx.reply(
         'Admin Panel\n\n' +
@@ -219,7 +258,8 @@ export async function adminCommand(ctx: Context): Promise<void> {
         '/admin fee 1.8 — Cambiar comision (1.5-2.5)\n' +
         '/admin raffle — Sorteo\n' +
         '/admin treasury — Balance ganancias\n' +
-        '/admin withdraw BTC 100000 — Retiro\n' +
+        '/admin withdraw <sats> — Marcar retiro\n' +
+        '/admin pro on|off|status — Boltz Pro\n' +
         '/admin broadcast — Enviar a todos',
       );
   }
