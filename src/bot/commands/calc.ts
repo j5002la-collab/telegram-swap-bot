@@ -16,13 +16,13 @@ export async function calcCommand(ctx: Context): Promise<void> {
   );
 }
 
-export async function handleCalcText(ctx: Context): Promise<void> {
-  if (!ctx.message || !('text' in ctx.message)) return;
+export async function handleCalcText(ctx: Context, next: () => Promise<void>): Promise<void> {
+  if (!ctx.message || !('text' in ctx.message)) return next();
 
   const raw = ctx.message.text.trim();
   const amount = parseInt(raw, 10);
 
-  if (isNaN(amount) || amount <= 0) return;
+  if (isNaN(amount) || amount <= 0) return next();
 
   try {
     const rateInfo = await rateEngine.getRate('submarine', 'BTC', 'BTC');
