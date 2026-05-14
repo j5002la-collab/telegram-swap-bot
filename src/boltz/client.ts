@@ -81,11 +81,11 @@ export class BoltzClient {
   }
 
   // --- Submarine Swap ---
+  // Pro mode has 1M sat minimum for submarine — disable it for user swaps
   async createSubmarineSwap(params: SubmarineSwapRequest): Promise<SubmarineSwapResponse> {
-    const body = this.proEnabled ? { ...params, referralId: 'pro' } : params;
-    logger.info(`Creating submarine swap [pro=${this.proEnabled}]`, { from: params.from, to: params.to });
-    const { data } = await this.http.post<SubmarineSwapResponse>('/swap/submarine', body);
-    logger.info('Submarine swap created', { swapId: data.id, pro: this.proEnabled });
+    logger.info('Creating submarine swap [regular]', { from: params.from, to: params.to });
+    const { data } = await this.http.post<SubmarineSwapResponse>('/swap/submarine', params);
+    logger.info('Submarine swap created', { swapId: data.id });
     return data;
   }
 
