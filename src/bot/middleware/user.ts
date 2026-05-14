@@ -33,29 +33,23 @@ export const userMiddleware: Middleware<Context> = async (ctx, next) => {
     const username = ctx.from.username || '';
     const firstName = ctx.from.first_name || '';
 
-    let user = await User.findOne({ telegramId });
+    // Atomic upsert: always keep username/firstName in sync
+    const user = await User.findOneAndUpdate(
+      { telegramId },
+      {
+        $set: { username, firstName },
+        $setOnInsert: { firstSeen: new Date(), lastSeen: new Date() },
+      },
+      { upsert: true, new: true },
+    );
 
-    if (user) {
-      // Debounce: only update lastSeen every 2 minutes to avoid DB write pressure
-      const twoMinutesAgo = Date.now() - 2 * 60 * 1000;
-      const needsUpdate = user.lastSeen.getTime() < twoMinutesAgo ||
-        user.username !== username ||
-        user.firstName !== firstName;
-
-      if (needsUpdate) {
-        user.lastSeen = new Date();
-        user.username = username;
-        user.firstName = firstName;
-        await user.save();
-      }
-    } else {
-      user = await User.create({
-        telegramId,
-        username,
-        firstName,
-        firstSeen: new Date(),
-        lastSeen: new Date(),
-      });
+    // Debounced lastSeen: only touch if >2 min stale (optimistic lock)
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+    if (user.lastSeen < twoMinutesAgo) {
+      await User.updateOne(
+        { telegramId, lastSeen: user.lastSeen }, // optimistic lock
+        { $set: { lastSeen: new Date() } },
+      );
     }
 
     setUserState(ctx, {

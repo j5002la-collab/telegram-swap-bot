@@ -169,6 +169,8 @@ async function adminWithdraw(ctx: Context, args: string[]): Promise<void> {
 }
 
 // --- /admin broadcast ---
+let pendingBroadcast: { message: string; userCount: number } | null = null;
+
 async function adminBroadcast(ctx: Context, args: string[]): Promise<void> {
   if (args.length < 3) {
     await ctx.reply('Uso: /admin broadcast Mensaje a enviar');
@@ -176,22 +178,91 @@ async function adminBroadcast(ctx: Context, args: string[]): Promise<void> {
   }
   const message = args.slice(2).join(' ');
   try {
-    const users = await User.find({}).select('telegramId');
-    let sent = 0, fail = 0;
-    await ctx.reply(`Enviando a ${users.length} usuarios...`);
-    for (const user of users) {
-      try {
-        await ctx.telegram.sendMessage(Number(user.telegramId), 'SwapBot: ' + message);
-        sent++;
-      } catch { fail++; }
-      await new Promise((r) => setTimeout(r, 50));
+    const userCount = await User.countDocuments();
+    if (userCount === 0) {
+      await ctx.reply('No hay usuarios registrados.');
+      return;
     }
-    await ctx.reply(`Broadcast: ${sent} enviados, ${fail} fallidos`);
-    logger.info('Admin broadcast', { sent, fail });
+    pendingBroadcast = { message, userCount };
+    await ctx.reply(
+      `¿Enviar broadcast a *${userCount}* usuarios?\n\nMensaje: _${message}_`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback('✅ Confirmar envío', 'admin_broadcast_confirm')],
+        [Markup.button.callback('❌ Cancelar', 'admin_broadcast_cancel')],
+      ]),
+    );
   } catch (error) {
-    logger.error('Admin broadcast error', { error });
+    logger.error('Admin broadcast prep error', { error });
     await ctx.reply('Error.');
   }
+}
+
+async function executeBroadcast(ctx: Context): Promise<void> {
+  if (!pendingBroadcast) {
+    await ctx.editMessageText('Broadcast expirado. Usa /admin broadcast de nuevo.');
+    return;
+  }
+
+  const { message } = pendingBroadcast;
+  pendingBroadcast = null;
+
+  try {
+    const users = await User.find({}).select('telegramId');
+    let sent = 0, fail = 0;
+    const BATCH_SIZE = 25;
+    const BATCH_DELAY_MS = 1100; // ~22 msg/sec, well under Telegram's 30/sec limit
+
+    await ctx.editMessageText(`Enviando broadcast a ${users.length} usuarios...`);
+
+    for (let i = 0; i < users.length; i += BATCH_SIZE) {
+      const batch = users.slice(i, i + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        batch.map((user) =>
+          ctx.telegram.sendMessage(Number(user.telegramId), '📢 SwapBot: ' + message),
+        ),
+      );
+      sent += results.filter((r) => r.status === 'fulfilled').length;
+      fail += results.filter((r) => r.status === 'rejected').length;
+
+      // Progress update every 100 users
+      if ((i + BATCH_SIZE) % 100 === 0 || i + BATCH_SIZE >= users.length) {
+        try {
+          await ctx.editMessageText(
+            `Enviando broadcast... ${Math.min(i + BATCH_SIZE, users.length)}/${users.length}\n✅ ${sent} | ❌ ${fail}`,
+          );
+        } catch { /* message edit may fail */ }
+      }
+
+      if (i + BATCH_SIZE < users.length) {
+        await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+      }
+    }
+
+    await ctx.editMessageText(
+      `📢 *Broadcast completado*\n\n✅ Enviados: ${sent}\n❌ Fallidos: ${fail}\n📊 Total usuarios: ${users.length}`,
+    );
+    logger.info('Admin broadcast completed', { sent, fail, total: users.length });
+  } catch (error) {
+    logger.error('Admin broadcast error', { error });
+    await ctx.editMessageText('Error durante el broadcast.');
+  }
+}
+
+export async function handleBroadcastConfirm(ctx: Context): Promise<void> {
+  if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
+  if (!isAdmin(ctx)) {
+    await ctx.answerCbQuery('No autorizado');
+    return;
+  }
+
+  if (ctx.callbackQuery.data === 'admin_broadcast_cancel') {
+    pendingBroadcast = null;
+    await ctx.editMessageText('Broadcast cancelado.');
+    return;
+  }
+
+  await ctx.answerCbQuery();
+  await executeBroadcast(ctx);
 }
 
 
