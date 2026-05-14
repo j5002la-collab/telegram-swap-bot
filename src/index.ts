@@ -34,13 +34,13 @@ async function main(): Promise<void> {
     // Enable Boltz Pro if configured (default: on)
     if (config.boltzProEnabled) {
       boltzClient.enablePro();
-      logger.info('Boltz Pro enabled (auto from config)');
+    } else {
+      boltzClient.disablePro();
     }
 
     // Initialize ChangeNOW client for USDT/USDC swaps
     if (config.changenowApiKey) {
       initCNClient(config.changenowApiKey);
-      logger.info('ChangeNOW client initialized');
     } else {
       logger.warn('CHANGENOW_API_KEY not set — USDT/USDC swaps disabled');
     }
