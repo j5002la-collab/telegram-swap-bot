@@ -12,7 +12,9 @@ export interface CNCurrency {
 }
 
 export interface CNEstimateResponse {
-  estimatedAmount: string;
+  estimatedAmount?: string;
+  toAmount?: string;
+  fromAmount?: number;
   rateId: string;
   validUntil: string;
   transactionSpeedForecast: string;

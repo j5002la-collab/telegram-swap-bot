@@ -401,8 +401,8 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
             const estimate = await cnClient.estimate(fromAsset.ticker, toAsset.ticker, fromAmount, fromAsset.network, toAsset.network);
             logger.debug('Swap: ChangeNOW estimate response', { from: `${fromAsset.ticker}:${fromAsset.network}`, to: toAsset.ticker, ms: Date.now() - t0 });
             rateInfo = {
-              boltzRate: parseFloat(estimate.estimatedAmount) / parseFloat(fromAmount),
-              userRate: parseFloat(estimate.estimatedAmount) / parseFloat(fromAmount),
+              boltzRate: parseFloat((estimate.toAmount || estimate.estimatedAmount || '0')) / parseFloat(fromAmount),
+              userRate: parseFloat((estimate.toAmount || estimate.estimatedAmount || '0')) / parseFloat(fromAmount),
               boltzFeePct: 0.5, // ChangeNOW fixed-rate fee
               boltzMinerFee: 0,
               botCommissionPct: commissionEngine.getCommissionRate(),
@@ -513,7 +513,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
           swapId, userId: userState?.userId || 'unknown',
           direction: s.direction,
           sourceChain: s.sourceChain, destChain: s.destChain,
-          sourceAmount: s.sourceAmount!, destAmount: res.expectedAmount,
+          sourceAmount: s.sourceAmount!, destAmount: res.expectedAmount || s.sourceAmount || 0,
           sourceCurrency: 'BTC', destCurrency: 'BTC',
           boltzSwapId: swapServiceId, boltzStatus: 'swap.created',
           commissionRate: s.fee?.commissionRate || 0,
@@ -545,7 +545,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
           swapId, userId: userState?.userId || 'unknown',
           direction: s.direction,
           sourceChain: s.sourceChain, destChain: s.destChain,
-          sourceAmount: s.sourceAmount!, destAmount: res.expectedAmount,
+          sourceAmount: s.sourceAmount!, destAmount: res.expectedAmount || s.sourceAmount || 0,
           sourceCurrency: 'BTC', destCurrency: 'BTC',
           boltzSwapId: swapServiceId, boltzStatus: 'swap.created',
           commissionRate: s.fee?.commissionRate || 0,
@@ -604,7 +604,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
     const exchange = await cnClient.createExchange({
       fromCurrency: fromAsset.ticker, toCurrency: toAsset.ticker,
       fromNetwork: fromAsset.network, toNetwork: toAsset.network,
-      fromAmount, toAmount: estimate.estimatedAmount,
+      fromAmount, toAmount: (estimate.toAmount || estimate.estimatedAmount || '0'),
       address: s.destAddress || 'bc1q_required',
       flow: 'fixed-rate', rateId: estimate.rateId,
     });
@@ -618,7 +618,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
         sourceChain: s.sourceChain,
         destChain: s.destChain,
         sourceAmount: Math.round(parseFloat(fromAmount) * 100),
-        destAmount: Math.round(parseFloat(estimate.estimatedAmount) * 100_000_000),
+        destAmount: Math.round(parseFloat((estimate.toAmount || estimate.estimatedAmount || '0')) * 100_000_000),
         sourceCurrency: s.currency || 'USDT',
         destCurrency: 'BTC',
         boltzSwapId: exchange.id,
@@ -648,7 +648,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
       'Intercambio creado!\n\n' +
       'Envia ' + fromAmount + ' ' + (s.currency || 'USDT') + ' (' + (s.sourceChain || '') + ') a:\n\n' +
       '`' + exchange.payinAddress + '`\n\n' +
-      'Recibirás: ~' + estimate.estimatedAmount + ' BTC\n' +
+      'Recibirás: ~' + (estimate.toAmount || estimate.estimatedAmount || '0') + ' BTC\n' +
       'Al confirmar, se envía automáticamente.',
     );
 
