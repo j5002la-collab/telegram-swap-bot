@@ -224,7 +224,18 @@ export async function handleSwapInvoice(ctx: Context): Promise<void> {
   if (!s || s.step !== 'invoice') return; // Only handle when actively waiting for invoice
 
   const raw = ctx.message.text.trim();
-  if (!raw.startsWith('lnbc') && !raw.startsWith('lntb') && !raw.startsWith('lnbcrt')) return;
+
+  // Reject testnet/regtest invoices — only mainnet (lnbc) accepted
+  if (raw.startsWith('lntb') || raw.startsWith('lnbcrt')) {
+    await ctx.reply(
+      '⚠️ Factura de testnet/regtest detectada.\n\n' +
+      'SwapBot solo opera en Bitcoin mainnet.\n' +
+      'Genera una factura mainnet (lnbc...) e inténtalo de nuevo.',
+    );
+    return;
+  }
+
+  if (!raw.startsWith('lnbc')) return;
 
   // Decode invoice
   const invoiceAmount = decodeInvoiceAmount(raw);
@@ -283,9 +294,15 @@ export async function handleSwapAmount(ctx: Context): Promise<void> {
   const s = ss(ctx);
   if (!s || s.step !== 'amount') return; // Only handle when waiting for amount
 
-  // Skip if it looks like an invoice
+  // Skip Lightning invoices (handled by handleSwapInvoice); reject testnet
   const raw = ctx.message.text.trim();
-  if (raw.startsWith('lnbc') || raw.startsWith('lntb') || raw.startsWith('lnbcrt')) return;
+  if (raw.startsWith('ln')) {
+    if (raw.startsWith('lntb') || raw.startsWith('lnbcrt')) {
+      await ctx.reply('⚠️ Solo se aceptan facturas mainnet (lnbc...).');
+      return;
+    }
+    if (raw.startsWith('lnbc')) return; // handled by handleSwapInvoice
+  }
 
   const amount = parseInt(raw, 10);
   if (isNaN(amount) || amount <= 0) {
