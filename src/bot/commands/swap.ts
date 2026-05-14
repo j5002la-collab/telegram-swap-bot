@@ -281,25 +281,54 @@ export async function handleSwapAddress(ctx: Context, next: () => Promise<void>)
 
   const raw = ctx.message.text.trim();
   if (!raw || raw.length < 10) {
-    await ctx.reply('Dirección muy corta. Pega tu invoice Lightning (lnbc...) o direccion BTC (bc1...).');
+    await ctx.reply('Dirección muy corta. Pega tu invoice Lightning (lnbc...) o dirección BTC (bc1...).');
     return;
   }
 
   try {
     s.destAddress = raw;
-    s.step = 'amount';
-    setSs(ctx, s);
     logger.info('Address saved', { addr: raw.slice(0, 20) + '...' });
+
+    // If destination is Lightning and user pasted an invoice, decode the amount
+    const isLightningDest = s.destChain === 'LIGHTNING';
+    const isInvoice = raw.startsWith('lnbc');
+    let invoiceAmountSats: number | null = null;
+
+    if (isLightningDest && isInvoice) {
+      invoiceAmountSats = decodeInvoiceAmount(raw);
+      logger.debug('Swap: LN invoice decoded for address', { hasAmount: invoiceAmountSats !== null, amountSats: invoiceAmountSats });
+    }
+
+    if (invoiceAmountSats && invoiceAmountSats > 0) {
+      // Invoice has amount → show it and still ask for source USD amount
+      s.step = 'amount';
+      setSs(ctx, s);
+      const btcAmount = (invoiceAmountSats / 100_000_000).toFixed(8);
+      await ctx.reply(
+        `📥 Invoice detectada: recibirás ~${invoiceAmountSats.toLocaleString()} sats (${btcAmount} BTC)\n\n` +
+        'Ahora ingresa cuánto quieres ENVIAR en USD:\n' +
+        'Ejemplo: 50 ($50 USD)\n\n' +
+        'Responde con el número.',
+        Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
+      );
+    } else {
+      // No amount detected → ask for USD amount
+      s.step = 'amount';
+      setSs(ctx, s);
+      await ctx.reply(
+        (isLightningDest
+          ? 'Dirección guardada. La invoice no tiene monto incluido.\n\n'
+          : 'Dirección guardada. ') +
+        'Ahora ingresa el monto en USD:\n' +
+        'Ejemplo: 100 ($100 USD)\n\n' +
+        'Responde con el número.',
+        Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
+      );
+    }
   } catch (err) {
     logger.error('Failed to save address', { error: err });
     await ctx.reply('Error al guardar la dirección. Intenta de nuevo.');
-    return;
   }
-
-  await ctx.reply(
-    'Dirección guardada. Ahora ingresa el monto en USD:\nEjemplo: 100 ($100 USD)\n\nResponde con el numero.',
-    Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
-  );
 }
 
 export async function handleSwapAmount(ctx: Context, next: () => Promise<void>): Promise<void> {
@@ -396,11 +425,15 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
 
     // Validate amount against limits
     if (amount < rateInfo.minAmount) {
-      await ctx.reply(`Monto muy bajo. Mínimo ${rateInfo.minAmount.toLocaleString()}.`);
+      const isFiat = !isBTC;
+      const minDisplay = isFiat ? `$${(rateInfo.minAmount / 100).toFixed(2)} USD` : `${rateInfo.minAmount.toLocaleString()} sats`;
+      await ctx.reply(`Monto muy bajo. Mínimo ${minDisplay}.`);
       return;
     }
     if (amount > rateInfo.maxAmount) {
-      await ctx.reply(`Monto muy alto. Máximo ${rateInfo.maxAmount.toLocaleString()}.`);
+      const isFiat = !isBTC;
+      const maxDisplay = isFiat ? `$${(rateInfo.maxAmount / 100).toFixed(2)} USD` : `${rateInfo.maxAmount.toLocaleString()} sats`;
+      await ctx.reply(`Monto muy alto. Máximo ${maxDisplay}.`);
       return;
     }
 
@@ -607,9 +640,15 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
       'Al confirmar, se envía automáticamente.',
     );
 
-  } catch (error) {
-    logger.error('ChangeNOW swap failed', { error, swapId });
-    await ctx.editMessageText('No se pudo crear el intercambio. Intenta de nuevo con /swap.');
+  } catch (error: any) {
+    const status = error?.response?.status;
+    const errMsg = status === 401
+      ? '\n\n🔑 Error de API key. Verifica CHANGENOW_API_KEY en .env'
+      : status === 404
+      ? '\n\n🔍 Par de intercambio no disponible para esta red.'
+      : '';
+    logger.error('ChangeNOW swap failed', { error, swapId, status });
+    await ctx.editMessageText('No se pudo crear el intercambio.' + errMsg + '\n\nIntenta de nuevo con /swap.');
     clearSs(ctx);
   }
 }
