@@ -28,9 +28,11 @@
     "axios": "^1.15.0",
     "bolt11": "^1.4.1",
     "dotenv": "^16.0.0",
+    "ecpair": "^3.0.1",
     "mongoose": "^8.17.1",
     "node-schedule": "^2.1.0",
     "telegraf": "^4.8.0",
+    "tiny-secp256k1": "^2.2.4",
     "winston": "^3.17.0",
     "ws": "^8.18.0"
   },
