@@ -25,7 +25,9 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "@types/bitcoinjs-lib": "^4.0.1",
     "axios": "^1.15.0",
+    "bitcoinjs-lib": "^7.0.1",
     "bolt11": "^1.4.1",
     "dotenv": "^16.0.0",
     "ecpair": "^3.0.1",

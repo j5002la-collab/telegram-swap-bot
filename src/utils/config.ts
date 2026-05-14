@@ -15,8 +15,10 @@ export interface Config {
   changenowApiKey: string;
   /** Lightning address where all commissions go (e.g. admin@getalby.com) */
   lightningAddress: string;
-  /** BTC on-chain address as fallback */
+  /** BTC on-chain address where users deposit for swaps */
   btcAddress: string;
+  /** BTC private key (WIF format) for signing outbound transactions */
+  btcPrivateKeyWif: string;
 }
 
 function parseAdminIds(raw: string | undefined): number[] {
@@ -46,6 +48,7 @@ export function loadConfig(): Config {
     changenowApiKey: process.env.CHANGENOW_API_KEY || '',
     lightningAddress: process.env.WALLET_LIGHTNING_ADDRESS || '',
     btcAddress: process.env.WALLET_BTC_ADDRESS || '',
+    btcPrivateKeyWif: process.env.WALLET_BTC_PRIVATE_KEY || '',
   };
 }
 
@@ -53,6 +56,9 @@ export function validateConfig(config: Config): string[] {
   const warnings: string[] = [];
   if (!config.lightningAddress && !config.btcAddress) {
     warnings.push('No BTC/Lightning address configured — earnings cannot be tracked');
+  }
+  if (!config.btcPrivateKeyWif) {
+    warnings.push('WALLET_BTC_PRIVATE_KEY not set — intermediary swaps disabled (will use direct Boltz)');
   }
   return warnings;
 }

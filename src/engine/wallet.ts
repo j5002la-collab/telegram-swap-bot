@@ -1,0 +1,150 @@
+import * as ecc from 'tiny-secp256k1';
+import { ECPairFactory } from 'ecpair';
+import * as bitcoin from 'bitcoinjs-lib';
+import axios from 'axios';
+import { config } from '../utils/config';
+import { logger } from '../utils/logger';
+
+const ECPair = ECPairFactory(ecc);
+
+export interface DepositInfo {
+  txid: string;
+  vout: number;
+  amount: number; // sats
+  confirmations: number;
+  address: string;
+}
+
+export interface WalletStatus {
+  address: string;
+  initialized: boolean;
+  error?: string;
+}
+
+let keyPair: ReturnType<typeof ECPair.fromWIF> | null = null;
+
+/**
+ * Initialize wallet from WIF private key in config.
+ */
+export function initWallet(): WalletStatus {
+  if (!config.btcPrivateKeyWif) {
+    return { address: config.btcAddress, initialized: false, error: 'WALLET_BTC_PRIVATE_KEY not configured' };
+  }
+
+  try {
+    keyPair = ECPair.fromWIF(config.btcPrivateKeyWif);
+    const { address } = bitcoin.payments.p2wpkh({
+      pubkey: Buffer.from(keyPair.publicKey),
+      network: bitcoin.networks.bitcoin,
+    });
+
+    if (address && config.btcAddress && address !== config.btcAddress) {
+      logger.warn('Wallet address mismatch', {
+        derived: address,
+        configured: config.btcAddress,
+      });
+    }
+
+    logger.info('Wallet initialized', {
+      address: address || 'unknown',
+      hasKey: true,
+    });
+
+    return { address: address || config.btcAddress, initialized: true };
+  } catch (error) {
+    logger.error('Failed to initialize wallet', { error });
+    return { address: config.btcAddress, initialized: false, error: String(error) };
+  }
+}
+
+/**
+ * Monitor for deposits to our address via mempool.space API.
+ * Returns deposits that are new since last check.
+ */
+export async function checkDeposits(sinceTxid?: string): Promise<DepositInfo[]> {
+  if (!config.btcAddress) return [];
+
+  try {
+    const url = `https://mempool.space/api/address/${config.btcAddress}/txs`;
+    const { data } = await axios.get<Array<{
+      txid: string;
+      vin: Array<{ prevout: { scriptpubkey_address: string } }>;
+      vout: Array<{ scriptpubkey_address: string; value: number }>;
+      status: { confirmed: boolean; block_height?: number };
+    }>>(url, { timeout: 10000 });
+
+    const deposits: DepositInfo[] = [];
+    for (const tx of data) {
+      // Only count outputs TO our address
+      for (let i = 0; i < tx.vout.length; i++) {
+        const vout = tx.vout[i];
+        if (vout.scriptpubkey_address === config.btcAddress) {
+          // Skip if we've already seen this (simple dedup by txid)
+          if (sinceTxid && tx.txid === sinceTxid) continue;
+
+          deposits.push({
+            txid: tx.txid,
+            vout: i,
+            amount: Math.round(vout.value * 100_000_000), // BTC → sats
+            confirmations: tx.status.confirmed ? 1 : 0,
+            address: config.btcAddress,
+          });
+        }
+      }
+    }
+
+    if (deposits.length > 0) {
+      logger.info('Deposits detected', { count: deposits.length });
+    }
+
+    return deposits;
+  } catch (error) {
+    logger.error('Failed to check deposits', { error });
+    return [];
+  }
+}
+
+/**
+ * Wait for a deposit of at least minAmount sats to our address.
+ * Polls every 20 seconds, times out after `timeoutMinutes`.
+ */
+export async function waitForDeposit(
+  minAmount: number,
+  timeoutMinutes = 60,
+): Promise<DepositInfo | null> {
+  const maxPolls = (timeoutMinutes * 60) / 20;
+  logger.info('Waiting for deposit', { minAmount, address: config.btcAddress, timeoutMin: timeoutMinutes });
+
+  for (let i = 0; i < maxPolls; i++) {
+    await new Promise((r) => setTimeout(r, 20_000));
+    const deposits = await checkDeposits();
+
+    for (const d of deposits) {
+      if (d.amount >= minAmount && d.confirmations > 0) {
+        logger.info('Deposit confirmed', { txid: d.txid, amount: d.amount });
+        return d;
+      }
+    }
+
+    if (i % 3 === 0 && i > 0) {
+      logger.debug('Still waiting for deposit', { poll: i + 1, maxPolls });
+    }
+  }
+
+  logger.warn('Deposit timeout', { minAmount, timeoutMin: timeoutMinutes });
+  return null;
+}
+
+/**
+ * Check if wallet is ready for outbound transactions.
+ */
+export function isWalletReady(): boolean {
+  return keyPair !== null && !!config.btcAddress;
+}
+
+/**
+ * Get our wallet address.
+ */
+export function getWalletAddress(): string {
+  return config.btcAddress || '';
+}

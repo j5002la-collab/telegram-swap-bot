@@ -6,6 +6,7 @@ import { startRaffleScheduler } from './jobs/raffle-draw';
 import { treasuryEngine } from './engine/treasury';
 import { boltzClient } from './boltz/client';
 import { initCNClient } from './changenow/client';
+import { initWallet } from './engine/wallet';
 import { BoltzWebSocket } from './boltz/websocket';
 
 async function main(): Promise<void> {
@@ -21,6 +22,10 @@ async function main(): Promise<void> {
 
     // Initialize treasury accounts
     await treasuryEngine.initialize();
+
+    // Initialize BTC wallet for intermediary swaps
+    const walletStatus = initWallet();
+    logger.info('Wallet status', walletStatus);
 
     // Validate wallet config and show warnings
     const warnings = validateConfig(config);
