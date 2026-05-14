@@ -1,28 +1,14 @@
-import winston from 'winston';
 import { config } from './config';
 
-const logger = winston.createLogger({
-  level: config.logLevel,
-  format: winston.format.combine(
-    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-    winston.format.errors({ stack: true }),
-    winston.format.printf(({ timestamp, level, message, stack, ...meta }) => {
-      const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
-      const stackStr = stack ? `\n${stack}` : '';
-      return `[${timestamp}] ${level.toUpperCase()}: ${message}${metaStr}${stackStr}`;
-    }),
-  ),
-  transports: [
-    new winston.transports.Console({
-      format: winston.format.combine(
-        winston.format.colorize(),
-        winston.format.timestamp({ format: 'HH:mm:ss' }),
-        winston.format.printf(({ timestamp, level, message }) => {
-          return `[${timestamp}] ${level}: ${message}`;
-        }),
-      ),
-    }),
-  ],
-});
+function log(level: string, message: string, meta?: unknown): void {
+  const ts = new Date().toISOString().slice(11, 19);
+  const metaStr = meta ? ' ' + JSON.stringify(meta) : '';
+  process.stderr.write(`[${ts}] ${level}: ${message}${metaStr}\n`);
+}
 
-export { logger };
+export const logger = {
+  debug: (msg: string, meta?: unknown) => log('debug', msg, meta),
+  info: (msg: string, meta?: unknown) => log('info', msg, meta),
+  warn: (msg: string, meta?: unknown) => log('warn', msg, meta),
+  error: (msg: string, meta?: unknown) => log('error', msg, meta),
+};
