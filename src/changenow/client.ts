@@ -88,6 +88,22 @@ export class ChangeNowClient {
         'Content-Type': 'application/json',
       },
     });
+
+    // Debug: log all ChangeNOW API calls
+    this.http.interceptors.request.use((req) => {
+      logger.debug('ChangeNOW API →', { method: req.method?.toUpperCase(), url: req.url });
+      return req;
+    });
+    this.http.interceptors.response.use(
+      (res) => {
+        logger.debug('ChangeNOW API ←', { status: res.status, url: res.config.url });
+        return res;
+      },
+      (err) => {
+        logger.error('ChangeNOW API ✗', { url: err.config?.url, status: err.response?.status, message: err.message });
+        return Promise.reject(err);
+      },
+    );
   }
 
   async getCurrencies(flow: 'fixed-rate' | 'standard' = 'fixed-rate'): Promise<CNCurrency[]> {

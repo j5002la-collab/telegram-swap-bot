@@ -51,9 +51,11 @@ export function createBot(boltzWs?: BoltzWebSocket): Telegraf<Context> {
   bot.on('text', handleSwapAmount);
   bot.on('text', handleCalcText);
 
-  // Message tracer
+  // Message tracer — log all incoming messages for flow debugging
   bot.use(async (ctx, next) => {
-    process.stderr.write(new Date().toISOString().slice(11,19) + ' MSG: ' + (ctx.from?.first_name || '?') + ' - ' + ctx.updateType + '\n');
+    const from = ctx.from?.first_name || ctx.from?.username || '?';
+    const text = ctx.message && 'text' in ctx.message ? ctx.message.text.slice(0, 60) : '';
+    logger.debug('📩 Incoming', { from, type: ctx.updateType, text });
     await next();
   });
 

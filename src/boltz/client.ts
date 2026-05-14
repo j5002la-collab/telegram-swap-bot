@@ -25,6 +25,22 @@ export class BoltzClient {
       timeout: 15000,
       headers: { 'Content-Type': 'application/json' },
     });
+
+    // Debug: log all Boltz API calls
+    this.http.interceptors.request.use((req) => {
+      logger.debug('Boltz API →', { method: req.method?.toUpperCase(), url: req.url });
+      return req;
+    });
+    this.http.interceptors.response.use(
+      (res) => {
+        logger.debug('Boltz API ←', { status: res.status, url: res.config.url, ms: Date.now() - Number(res.config.headers?.['x-start'] || Date.now()) });
+        return res;
+      },
+      (err) => {
+        logger.error('Boltz API ✗', { url: err.config?.url, status: err.response?.status, data: err.response?.data, message: err.message });
+        return Promise.reject(err);
+      },
+    );
   }
 
   // --- Pro Mode ---

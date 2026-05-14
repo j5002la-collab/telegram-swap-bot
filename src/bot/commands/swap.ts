@@ -97,6 +97,7 @@ export async function handleSwapCurrency(ctx: Context): Promise<void> {
   if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
   await ctx.answerCbQuery();
   const data = ctx.callbackQuery.data;
+  logger.debug('Swap step: currency selected', { data, userId: ctx.from?.id });
   if (data === 'swap_cancel') { clearSs(ctx); await ctx.editMessageText('Cancelado.'); return; }
   if (data === 'swap_cur_disabled') { await ctx.answerCbQuery('Se necesita configurar API key'); return; }
 
@@ -108,10 +109,12 @@ export async function handleSwapCurrency(ctx: Context): Promise<void> {
     s.step = 'direction';
     s.sourceChain = 'BTC';
     setSs(ctx, s);
+    logger.debug('Swap: BTC selected → direction menu', { userId: ctx.from?.id });
     await showDirectionMenu(ctx);
   } else {
     s.step = 'network';
     setSs(ctx, s);
+    logger.debug('Swap: stablecoin selected → network menu', { currency, userId: ctx.from?.id });
     await showNetworkMenu(ctx, currency);
   }
 }
@@ -317,6 +320,8 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
   const s = ss(ctx);
   if (!s) return;
 
+  logger.debug('Swap: processing amount', { amount, currency: s.currency, direction: s.direction, userId: ctx.from?.id });
+
   try {
     // --- Fetch real rates depending on currency ---
     let rateInfo: RateInfo | null = null;
@@ -324,13 +329,17 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
 
     if (isBTC) {
       const isReverse = s.direction === 'LN2ONCHAIN';
+      logger.debug('Swap: fetching BTC rate from rateEngine', { isReverse });
+      const t0 = Date.now();
       rateInfo = await rateEngine.getRate(
         isReverse ? 'reverse' : 'submarine',
         'BTC',
         'BTC',
       );
+      logger.debug('Swap: rateEngine response', { isReverse, found: !!rateInfo, ms: Date.now() - t0 });
     } else if (s.currency === 'USDT' || s.currency === 'USDC') {
       // USDT/USDC: attempt ChangeNOW estimate for real rate display
+      logger.debug('Swap: fetching ChangeNOW estimate', { currency: s.currency, network: s.sourceChain });
       const cnClient = getCNClient();
       if (cnClient) {
         try {
@@ -338,7 +347,9 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
           if (ticker) {
             const toCurrency = s.destChain === 'LIGHTNING' ? 'btcln' : 'btc';
             const fromAmount = String(amount / 100);
+            const t0 = Date.now();
             const estimate = await cnClient.estimate(ticker, toCurrency, fromAmount);
+            logger.debug('Swap: ChangeNOW estimate response', { ticker, toCurrency, ms: Date.now() - t0 });
             rateInfo = {
               boltzRate: parseFloat(estimate.estimatedAmount) / parseFloat(fromAmount),
               userRate: parseFloat(estimate.estimatedAmount) / parseFloat(fromAmount),
@@ -419,6 +430,8 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
   const swapId = 'SWAP-' + crypto.randomBytes(6).toString('hex').toUpperCase();
   const userState = getUserState(ctx);
 
+  logger.debug('Swap: confirm — executing swap', { swapId, direction: s.direction, amount: s.sourceAmount, currency: s.currency, userId: userState?.userId });
+
   await ctx.editMessageText('Creando intercambio...');
 
   // === BTC ROUTE ===
@@ -429,6 +442,8 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
       let preimageHex: string | undefined;
 
       if (isReverse) {
+        logger.debug('Swap: creating Boltz reverse swap', { amount: s.sourceAmount });
+        const t0 = Date.now();
         const preimage = crypto.randomBytes(32);
         preimageHex = preimage.toString('hex');
         const key = crypto.randomBytes(32).toString('hex');
@@ -438,6 +453,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
           preimageHash: crypto.createHash('sha256').update(preimage).digest('hex'),
         });
         swapServiceId = res.id;
+        logger.debug('Swap: Boltz reverse swap created', { boltzId: res.id, ms: Date.now() - t0 });
         // Save pending swap with preimage for recovery
         await Swap.create({
           swapId, userId: userState?.userId || 'unknown',
@@ -461,11 +477,14 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
         );
       } else {
         if (!s.invoice) { await ctx.editMessageText('Falta la invoice. Usa /swap.'); clearSs(ctx); return; }
+        logger.debug('Swap: creating Boltz submarine swap', { invoiceLen: s.invoice.length });
+        const t0 = Date.now();
         const res = await boltzClient.createSubmarineSwap({
           from: 'BTC', to: 'BTC', invoice: s.invoice,
           refundPublicKey: crypto.randomBytes(32).toString('hex'),
         });
         swapServiceId = res.id;
+        logger.debug('Swap: Boltz submarine swap created', { boltzId: res.id, ms: Date.now() - t0 });
         // Save pending swap (no preimage needed for submarine)
         await Swap.create({
           swapId, userId: userState?.userId || 'unknown',
@@ -488,7 +507,9 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
       }
 
       if (boltzWebSocket && chatId && messageId) {
+        logger.debug('Swap: subscribing to WebSocket', { boltzId: swapServiceId });
         boltzWebSocket.subscribe(swapServiceId, (_id, status) => {
+          logger.debug('Swap: WS status update', { boltzId: swapServiceId, status });
           updateSwapMessage(chatId, messageId, status, swapId, s, swapServiceId, userState?.userId).catch(() => {});
         });
       }
