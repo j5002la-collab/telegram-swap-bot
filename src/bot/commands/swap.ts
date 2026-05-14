@@ -224,9 +224,14 @@ export async function handleSwapDirection(ctx: Context): Promise<void> {
 export async function handleSwapInvoice(ctx: Context): Promise<void> {
   if (!ctx.message || !('text' in ctx.message)) return;
   const s = ss(ctx);
-  if (!s || s.step !== 'invoice') return; // Only handle when actively waiting for invoice
-
   const raw = ctx.message.text.trim();
+  logger.debug('📥 handleSwapInvoice fired', { step: s?.step, isInvoice: raw.startsWith('ln'), userId: ctx.from?.id });
+  if (!s || s.step !== 'invoice') {
+    if (raw.startsWith('lnbc') && s) {
+      logger.warn('handleSwapInvoice: session step mismatch', { step: s.step, expected: 'invoice' });
+    }
+    return;
+  }
 
   // Reject testnet/regtest invoices — only mainnet (lnbc) accepted
   if (raw.startsWith('lntb') || raw.startsWith('lnbcrt')) {
@@ -267,6 +272,7 @@ export async function handleSwapInvoice(ctx: Context): Promise<void> {
 export async function handleSwapAddress(ctx: Context): Promise<void> {
   if (!ctx.message || !('text' in ctx.message)) return;
   const s = ss(ctx);
+  logger.debug('📥 handleSwapAddress fired', { step: s?.step, userId: ctx.from?.id });
   if (!s || s.step !== 'address') return;
 
   const raw = ctx.message.text.trim();
@@ -295,6 +301,7 @@ export async function handleSwapAddress(ctx: Context): Promise<void> {
 export async function handleSwapAmount(ctx: Context): Promise<void> {
   if (!ctx.message || !('text' in ctx.message)) return;
   const s = ss(ctx);
+  logger.debug('📥 handleSwapAmount fired', { step: s?.step, userId: ctx.from?.id });
   if (!s || s.step !== 'amount') return; // Only handle when waiting for amount
 
   // Skip Lightning invoices (handled by handleSwapInvoice); reject testnet
