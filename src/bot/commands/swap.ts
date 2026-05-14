@@ -553,8 +553,6 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
 
   logger.debug('Swap: confirm — executing swap', { swapId, direction: s.direction, amount: s.sourceAmount, currency: s.currency, userId: userState?.userId });
 
-  await ctx.editMessageText('Creando intercambio...');
-
   // === BTC ROUTE ===
   if (s.currency === 'BTC') {
     try {
@@ -657,12 +655,12 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
             status: 'pending',
           });
 
-          // Brief confirm on original message
-          await ctx.editMessageText('✅ Intercambio creado!');
-
-          // Send address in NEW persistent message
+          // Do NOT edit the callback message — reply with address in new visible message
           const addrMsg = await ctx.reply(
-            '📤 *Envía exactamente* **' + res.expectedAmount.toLocaleString() + ' sats** a:\n\n' +
+            '━━━━━━━━━━━━━━━━━━━━\n' +
+            '✅ *INTERCAMBIO CREADO*\n' +
+            '━━━━━━━━━━━━━━━━━━━━\n\n' +
+            '📤 Envía exactamente **' + res.expectedAmount.toLocaleString() + ' sats** a:\n\n' +
             '`' + res.address + '`\n\n' +
             '⏳ _Esperando transacción on-chain..._',
           );
