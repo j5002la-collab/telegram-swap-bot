@@ -68,7 +68,7 @@ function decodeInvoiceAmount(invoice: string): number | null {
 // ============================================================
 export async function cancelCommand(ctx: Context): Promise<void> {
   clearSs(ctx);
-  await ctx.reply('Sesion cancelada. Usa /swap para empezar de nuevo.');
+  await ctx.reply('Sesión cancelada. Usa /swap para empezar de nuevo.');
 }
 
 // ============================================================
@@ -194,7 +194,7 @@ export async function handleSwapDirection(ctx: Context): Promise<void> {
     s.step = 'invoice';
     setSs(ctx, s);
     await ctx.editMessageText(
-      'BTC On-chain -> Lightning\n\nPega tu invoice de Lightning (lnbc...).\nEl monto se detectara automaticamente.',
+      'BTC On-chain -> Lightning\n\nPega tu invoice de Lightning (lnbc...).\nEl monto se detectará automáticamente.',
       Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
     );
   } else if (s.currency !== 'BTC') {
@@ -202,7 +202,7 @@ export async function handleSwapDirection(ctx: Context): Promise<void> {
     setSs(ctx, s);
     const destType = s.destChain === 'LIGHTNING' ? 'Lightning (invoice lnbc...)' : 'BTC On-chain (bc1...)';
     await ctx.editMessageText(
-      'Direccion ' + destType + ':\n\nPega la direccion donde recibiras los fondos.',
+       'Dirección ' + destType + ':\n\nPega la dirección donde recibirás los fondos.',
       Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
     );
   } else {
@@ -268,7 +268,7 @@ export async function handleSwapAddress(ctx: Context): Promise<void> {
 
   const raw = ctx.message.text.trim();
   if (!raw || raw.length < 10) {
-    await ctx.reply('Direccion muy corta. Pega tu invoice Lightning (lnbc...) o direccion BTC (bc1...).');
+    await ctx.reply('Dirección muy corta. Pega tu invoice Lightning (lnbc...) o direccion BTC (bc1...).');
     return;
   }
 
@@ -279,12 +279,12 @@ export async function handleSwapAddress(ctx: Context): Promise<void> {
     logger.info('Address saved', { addr: raw.slice(0, 20) + '...' });
   } catch (err) {
     logger.error('Failed to save address', { error: err });
-    await ctx.reply('Error al guardar la direccion. Intenta de nuevo.');
+    await ctx.reply('Error al guardar la dirección. Intenta de nuevo.');
     return;
   }
 
   await ctx.reply(
-    'Direccion guardada. Ahora ingresa el monto en USD:\nEjemplo: 100 ($100 USD)\n\nResponde con el numero.',
+    'Dirección guardada. Ahora ingresa el monto en USD:\nEjemplo: 100 ($100 USD)\n\nResponde con el numero.',
     Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
   );
 }
@@ -324,8 +324,8 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
       minAmount: 25000, maxAmount: 25000000, pairHash: '',
     });
 
-    if (amount < 25000) { await ctx.reply('Monto muy bajo. Minimo 25,000.'); return; }
-    if (amount > 25000000) { await ctx.reply('Monto muy alto. Maximo 25,000,000.'); return; }
+    if (amount < 25000) { await ctx.reply('Monto muy bajo. Mínimo 25,000.'); return; }
+    if (amount > 25000000) { await ctx.reply('Monto muy alto. Máximo 25,000,000.'); return; }
 
     s.sourceAmount = amount;
     s.fee = fee;
@@ -353,7 +353,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
 
   const s = ss(ctx);
   if (!s?.direction || !s.sourceAmount || !s.fee) {
-    await ctx.editMessageText('Sesion expirada. Usa /swap.'); clearSs(ctx); return;
+    await ctx.editMessageText('Sesión expirada. Usa /swap.'); clearSs(ctx); return;
   }
 
   const chatId = ctx.callbackQuery.message?.chat.id;
@@ -414,7 +414,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
       const errMsg = error instanceof Error ? error.message : '';
       await ctx.editMessageText(
         'No se pudo crear el intercambio.\n\n' +
-        (errMsg.includes('invoice') ? 'La invoice no es valida.\n\n' : '') +
+        (errMsg.includes('invoice') ? 'La invoice no es válida.\n\n' : '') +
         (errMsg.includes('pair') ? 'Par no disponible.\n\n' : '') +
         'Intenta de nuevo con /swap.',
       );
@@ -449,8 +449,8 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
       'Intercambio creado!\n\n' +
       'Envia ' + fromAmount + ' ' + (s.currency || 'USDT') + ' (' + (s.sourceChain || '') + ') a:\n\n' +
       '`' + exchange.payinAddress + '`\n\n' +
-      'Recibiras: ~' + estimate.estimatedAmount + ' ' + toCurrency.toUpperCase() + '\n' +
-      'Al confirmar, se envia automaticamente.',
+      'Recibirás: ~' + estimate.estimatedAmount + ' ' + toCurrency.toUpperCase() + '\n' +
+      'Al confirmar, se envía automáticamente.',
     );
 
   } catch (error) {

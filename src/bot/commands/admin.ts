@@ -65,7 +65,7 @@ async function adminSwaps(ctx: Context): Promise<void> {
     }
     const lines = ['Ultimos 20 swaps', ''];
     for (const s of recentSwaps) {
-      const emoji = s.status === 'completed' ? 'O' : s.status === 'failed' ? 'X' : '-';
+      const emoji = s.status === 'completed' ? '✅' : s.status === 'failed' ? '❌' : '⏳';
       lines.push(`${emoji} ${s.swapId} ${s.direction} profit=${s.botProfit} ${s.createdAt.toISOString().slice(0, 19)}`);
     }
     await ctx.reply(lines.join('\n'));
@@ -160,7 +160,7 @@ async function adminWithdraw(ctx: Context, args: string[]): Promise<void> {
       'Retiro registrado: ' + commissionEngine.formatAmount(amount, 'sats') + '\n' +
       'Balance restante: ' + commissionEngine.formatAmount(b.balance, 'sats') + '\n\n' +
       'Wallet Lightning: ' + (b.lightningAddress || b.btcAddress || 'No configurada') + '\n\n' +
-      'El monto NO se envia automaticamente.',
+      'El monto NO se envía automáticamente.',
     );
     logger.info('Admin withdrawal recorded', { amount });
   } catch (error) {
@@ -255,7 +255,7 @@ export async function adminCommand(ctx: Context): Promise<void> {
         '/admin volume — Estadisticas\n' +
         '/admin swaps — Ultimos swaps\n' +
         '/admin users — Usuarios\n' +
-        '/admin fee 1.8 — Cambiar comision (1.5-2.5)\n' +
+        '/admin fee 1.8 — Cambiar comisión (1.5-2.5)\n' +
         '/admin raffle — Sorteo\n' +
         '/admin treasury — Balance ganancias\n' +
         '/admin withdraw <sats> — Marcar retiro\n' +

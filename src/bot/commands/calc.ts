@@ -8,7 +8,7 @@ export async function calcCommand(ctx: Context): Promise<void> {
   await ctx.reply(
     'Calculadora SwapBot\n\n' +
     'Ingresa el monto en sats y te muestro:\n' +
-    '- Cuanto recibiras (descontando todas las comisiones)\n' +
+    '- Cuanto recibirás (descontando todas las desglose de comisiones)\n' +
     '- Comision SwapBot (1.5% - 2.5%)\n' +
     '- Fee de red + mineria\n' +
     '- Cuanto va al sorteo semanal\n\n' +
@@ -43,7 +43,7 @@ export async function handleCalcText(ctx: Context): Promise<void> {
       '',
       'Envias: ' + amount.toLocaleString() + ' sats (' + btcAmount.toFixed(8) + ' BTC)',
       '',
-      'Recibiras: ~' + fee.estimatedReceive.toLocaleString() + ' sats (' + receiveBTC.toFixed(8) + ' BTC)',
+      'Recibirás: ~' + fee.estimatedReceive.toLocaleString() + ' sats (' + receiveBTC.toFixed(8) + ' BTC)',
       '',
       '--- Comisiones ---',
       'SwapBot (' + fee.commissionRate + '%): ' + fee.commissionAmount.toLocaleString() + ' sats',

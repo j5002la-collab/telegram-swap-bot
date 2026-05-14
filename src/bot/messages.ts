@@ -20,8 +20,8 @@ export const MENU_BUTTONS = {
 export const MAIN_MENU_KEYBOARD = Markup.inlineKeyboard([
   [Markup.button.callback(MENU_BUTTONS.swap, 'start_swap')],
   [
-    Markup.button.callback(MENU_BUTTONS.rates, 'show_rates'),
-    Markup.button.callback(MENU_BUTTONS.raffle, 'show_raffle'),
+    Markup.button.callback('📊 Tasas', 'show_rates'),
+    Markup.button.callback('🎁 Sorteo', 'show_raffle'),
   ],
   [Markup.button.callback(MENU_BUTTONS.help, 'show_help')],
 ]);
