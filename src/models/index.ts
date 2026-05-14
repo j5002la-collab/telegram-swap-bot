@@ -14,7 +14,13 @@ export type { ITreasury } from './Treasury';
 
 export async function connectDatabase(): Promise<void> {
   try {
-    await mongoose.connect(config.mongoUri);
+    await mongoose.connect(config.mongoUri, {
+      serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 10000,
+      heartbeatFrequencyMS: 30000,
+      maxPoolSize: 10,
+      retryWrites: true,
+    });
     logger.info(`Connected to MongoDB at ${config.mongoUri}`);
   } catch (error) {
     logger.error('Failed to connect to MongoDB', { error });
