@@ -38,6 +38,10 @@ interface SwapSession {
   fee?: FeeBreakdown;
   invoice?: string;
   destAddress?: string;
+  /** Boltz on-chain address where user must send BTC */
+  boltzAddress?: string;
+  /** Boltz expected amount in sats */
+  boltzExpectedAmount?: number;
   preimage?: Buffer;
 }
 
@@ -642,6 +646,10 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
           });
           swapServiceId = res.id;
           logger.debug('Swap: Boltz submarine swap created', { boltzId: res.id, ms: Date.now() - t0 });
+
+          // Save address info for WS status updates
+          s.boltzAddress = res.address;
+          s.boltzExpectedAmount = res.expectedAmount;
           await Swap.create({
             swapId, userId: userState?.userId || 'unknown',
             direction: s.direction,
@@ -989,8 +997,17 @@ async function updateSwapMessage(
   const msg = labels[status] || ('Estado: ' + status);
 
   try {
-    await botInstance.telegram.editMessageText(chatId, messageId, undefined,
-      'Intercambio: ' + swapId + '\n\n' + msg);
+    // Build message: address + status (address persists, status updates)
+    let text = '🔁 Intercambio: `' + swapId + '`\n\n';
+
+    if (session.boltzAddress) {
+      text += '📤 Envía **' + (session.boltzExpectedAmount || session.sourceAmount || 0).toLocaleString() + ' sats** a:\n';
+      text += '`' + session.boltzAddress + '`\n\n';
+    }
+
+    text += msg;
+
+    await botInstance.telegram.editMessageText(chatId, messageId, undefined, text);
 
     if (status === 'transaction.claimed' || status === 'invoice.settled') {
       // Update the pending swap record (created at swap initiation)
