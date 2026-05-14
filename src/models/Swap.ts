@@ -34,6 +34,8 @@ export interface ISwap extends Document {
   commissionAmount: number;
   /** Bot net profit in smallest unit */
   botProfit: number;
+  /** Preimage hex for reverse swaps (needed for refund recovery) */
+  preimage?: string;
   status: SwapStatus;
   createdAt: Date;
   completedAt?: Date;
@@ -109,6 +111,9 @@ const swapSchema = new Schema<ISwap>(
       required: true,
       min: 0,
       validate: Number.isInteger,
+    },
+    preimage: {
+      type: String,
     },
     status: {
       type: String,
