@@ -23,13 +23,18 @@ export class TreasuryEngine {
         btcAddress: config.btcAddress,
       });
     } else {
+      let changed = false;
       if (treasury.lightningAddress !== config.lightningAddress) {
         treasury.lightningAddress = config.lightningAddress;
+        changed = true;
       }
       if (treasury.btcAddress !== config.btcAddress) {
         treasury.btcAddress = config.btcAddress;
+        changed = true;
       }
-      await treasury.save();
+      if (changed) {
+        await treasury.save();
+      }
     }
 
     logger.info('Treasury initialized', {

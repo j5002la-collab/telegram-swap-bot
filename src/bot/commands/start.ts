@@ -4,6 +4,7 @@ import { showHelp } from './showHelp';
 import { commissionEngine } from '../../engine/commission';
 import { rateEngine } from '../../engine/rates';
 import { logger } from '../../utils/logger';
+import { MAIN_MENU_KEYBOARD } from '../messages';
 import { swapCommand } from './swap';
 import { calcCommand } from './calc';
 import { raffleCommand } from './raffle';
@@ -14,21 +15,12 @@ export async function startCommand(ctx: Context): Promise<void> {
   const username = userState?.username || firstName;
   const rate = commissionEngine.getCommissionRate();
 
-  const welcomeMessage = 'SwapBot — Cambios instantaneos BTC/Lightning\n\n' +
-    'Comision: ' + rate + '% (configurable 1.5%-2.5%)\n' +
+  const welcomeMessage = 'SwapBot — Cambios instantáneos BTC/Lightning\n\n' +
+    'Comisión: ' + rate + '% (configurable 1.5%-2.5%)\n' +
     'Sorteo semanal: 0.1% del volumen\n\n' +
-    'Selecciona una opcion:';
+    'Selecciona una opción:';
 
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('Iniciar Swap', 'start_swap')],
-    [
-      Markup.button.callback('Calculadora', 'show_calc'),
-      Markup.button.callback('Sorteo', 'show_raffle'),
-    ],
-    [Markup.button.callback('Ayuda', 'show_help')],
-  ]);
-
-  await ctx.reply(welcomeMessage, keyboard);
+  await ctx.reply(welcomeMessage, MAIN_MENU_KEYBOARD);
 }
 
 export async function showRates(ctx: Context): Promise<void> {
