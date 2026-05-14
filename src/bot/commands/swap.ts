@@ -606,7 +606,9 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
         setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId!), 30 * 60 * 1000);
         if (!s.invoice) { await ctx.editMessageText('Falta la invoice. Usa /swap.'); clearSs(ctx); return; }
 
-        const useIntermediary = isWalletReady();
+        // Intermediary mode disabled for now — use direct Boltz
+        // TODO: re-enable when deposit monitoring + auto-send is stable
+        const useIntermediary = false; // isWalletReady();
 
         if (useIntermediary) {
           // Intermediary mode: user deposits to OUR wallet, we forward to Boltz
