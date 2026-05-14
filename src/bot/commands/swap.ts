@@ -589,14 +589,21 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
           preimage: preimageHex,
           status: 'pending',
         });
-        await ctx.editMessageText(
-          'Intercambio creado! (Lightning -> On-chain)\n\n' +
-          'Paga esta invoice desde tu wallet Lightning:\n\n' +
+        await ctx.editMessageText('Intercambio creado! 🎉');
+        const invMsg = await ctx.reply(
+          '⚡ *Paga esta invoice desde tu wallet Lightning:*\n\n' +
           '`' + res.invoice + '`\n\n' +
-          'Monto: ' + s.sourceAmount.toLocaleString() + ' sats\n' +
-          'Al pagar, se completa solo. Tiempo: 1-5 min.',
+          '📥 Monto: **' + s.sourceAmount!.toLocaleString() + ' sats**\n' +
+          '⏳ _Al pagar, se completa solo. Tiempo: 1-5 min._',
         );
-      } else {
+        const invChatId = invMsg.chat.id;
+        const invMessageId = invMsg.message_id;
+        if (boltzWebSocket && invChatId && invMessageId) {
+          boltzWebSocket.subscribe(swapServiceId, (_id, status) => {
+            updateSwapMessage(invChatId, invMessageId, status, swapId, s, swapServiceId, userState?.userId).catch(() => {});
+          });
+        }
+        setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId!), 30 * 60 * 1000);
         if (!s.invoice) { await ctx.editMessageText('Falta la invoice. Usa /swap.'); clearSs(ctx); return; }
 
         const useIntermediary = isWalletReady();
@@ -656,18 +663,23 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
             botProfit: s.fee?.botProfit || 0,
             status: 'pending',
           });
-          await ctx.editMessageText(
-            'Intercambio creado! (On-chain -> Lightning)\n\n' +
-            'Envia exactamente ' + res.expectedAmount.toLocaleString() + ' sats a:\n\n' +
+
+          // Send address in a NEW persistent message, edit confirm to brief
+          await ctx.editMessageText('Intercambio creado! 🎉');
+          const addrMsg = await ctx.reply(
+            '📤 *Envía exactamente* **' + res.expectedAmount.toLocaleString() + ' sats** a:\n\n' +
             '`' + res.address + '`\n\n' +
-            'Al confirmarse, se envia a tu Lightning. Tiempo: 10-30 min.',
+            '⏳ _Esperando transacción on-chain..._',
           );
 
-          if (boltzWebSocket && chatId && messageId) {
+          // Use the NEW message for WebSocket status updates
+          const addrChatId = addrMsg.chat.id;
+          const addrMessageId = addrMsg.message_id;
+          if (boltzWebSocket && addrChatId && addrMessageId) {
             logger.debug('Swap: subscribing to WebSocket', { boltzId: swapServiceId });
             boltzWebSocket.subscribe(swapServiceId, (_id, status) => {
               logger.debug('Swap: WS status update', { boltzId: swapServiceId, status });
-              updateSwapMessage(chatId, messageId, status, swapId, s, swapServiceId, userState?.userId).catch(() => {});
+              updateSwapMessage(addrChatId, addrMessageId, status, swapId, s, swapServiceId, userState?.userId).catch(() => {});
             });
           }
           setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId!), 30 * 60 * 1000);
