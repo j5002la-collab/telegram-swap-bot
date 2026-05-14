@@ -645,12 +645,19 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
     clearSs(ctx);
 
     await ctx.editMessageText(
-      'Intercambio creado!\n\n' +
-      'Envia ' + fromAmount + ' ' + (s.currency || 'USDT') + ' (' + (s.sourceChain || '') + ') a:\n\n' +
+      '⏳ Intercambio creado!\n\n' +
+      'Envia **' + fromAmount + ' ' + (s.currency || 'USDT') + '** (' + (s.sourceChain || '') + ') a:\n\n' +
       '`' + exchange.payinAddress + '`\n\n' +
-      'Recibirás: ~' + (estimate.toAmount || estimate.estimatedAmount || '0') + ' BTC\n' +
-      'Al confirmar, se envía automáticamente.',
+      'Recibiras: ~' + (estimate.toAmount || estimate.estimatedAmount || '0') + ' BTC\n\n' +
+      '🔍 _Esperando deposito..._',
     );
+
+    // Start polling for status updates on the edited message
+    if (chatId && messageId) {
+      startCNPolling(exchange.id, swapId, chatId, messageId).catch((err) => {
+        logger.error('CN polling failed', { error: err, cnId: exchange.id });
+      });
+    }
 
   } catch (error: any) {
     const status = error?.response?.status;
@@ -666,6 +673,76 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
 }
 
 // ============================================================
+// ChangeNOW status polling
+// ============================================================
+const CN_STATUS_LABELS: Record<string, string> = {
+  waiting: '⏳ Esperando tu depósito...',
+  confirming: '🔍 Depósito detectado, esperando confirmaciones...',
+  exchanging: '🔄 Intercambiando...',
+  sending: '📤 Enviando BTC a tu dirección...',
+  finished: '✅ ¡Intercambio completado!',
+  failed: '❌ Error en el intercambio.',
+  refunded: '↩️ Reembolsado.',
+};
+
+async function startCNPolling(
+  cnId: string, swapId: string, chatId: number, messageId: number,
+): Promise<void> {
+  const cnClient = getCNClient();
+  if (!cnClient || !botInstance) return;
+
+  const maxPolls = 120; // 30 minutes at 15s intervals
+  let lastStatus = '';
+
+  for (let i = 0; i < maxPolls; i++) {
+    await new Promise((r) => setTimeout(r, 15_000));
+
+    try {
+      const status = await cnClient.getStatus(cnId);
+      logger.debug('CN polling status', { cnId, status: status.status, poll: i + 1 });
+
+      if (status.status !== lastStatus) {
+        lastStatus = status.status;
+
+        let msg = '🔁 Swap #' + swapId + '\n\n';
+        msg += (CN_STATUS_LABELS[status.status] || ('Estado: ' + status.status));
+
+        if (status.payoutHash && status.status === 'finished') {
+          msg += '\n\n📋 Tx BTC: `' + status.payoutHash + '`';
+          // Update swap record
+          await Swap.findOneAndUpdate(
+            { swapId },
+            { status: 'completed', boltzStatus: status.status, completedAt: new Date() },
+          ).catch(() => {});
+        }
+
+        await botInstance.telegram.editMessageText(chatId, messageId, undefined, msg).catch(() => {});
+      }
+
+      // Terminal states
+      if (['finished', 'failed', 'refunded'].includes(status.status)) {
+        if (status.status !== 'finished') {
+          await Swap.findOneAndUpdate(
+            { swapId },
+            { status: status.status === 'refunded' ? 'refunded' : 'failed', boltzStatus: status.status },
+          ).catch(() => {});
+        }
+        return;
+      }
+    } catch (err) {
+      logger.warn('CN polling error', { cnId, error: err });
+    }
+  }
+
+  // Timeout
+  try {
+    await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+      '⏰ Swap #' + swapId + '\n\nTiempo límite alcanzado. Si enviaste los fondos, contacta a soporte con el ID: `' + cnId + '`',
+    );
+  } catch { /* ignore */ }
+}
+
+// ============================================================
 // Status updates (BTC swaps)
 // ============================================================
 async function updateSwapMessage(
@@ -675,20 +752,20 @@ async function updateSwapMessage(
   if (!botInstance) return;
 
   const labels: Record<string, string> = {
-    'swap.created': 'Creado. Esperando...',
-    'invoice.set': 'Invoice validada.',
-    'transaction.mempool': 'Tx detectada en la red.',
-    'transaction.confirmed': 'Confirmada. Procesando...',
-    'invoice.pending': 'Pagando invoice...',
-    'invoice.paid': 'Invoice pagada. Completando...',
-    'transaction.claim.pending': 'Casi listo...',
-    'transaction.claimed': 'Completado!',
-    'invoice.settled': 'Completado!',
-    'invoice.failedToPay': 'Error en el pago. Fondos reembolsados.',
-    'swap.expired': 'Expiro. Fondos reembolsados.',
-    'transaction.lockupFailed': 'Error en deposito.',
-    'transaction.failed': 'Error. Fondos reembolsados.',
-    'transaction.refunded': 'Reembolsado.',
+    'swap.created': '⏳ Swap creado. Esperando tu transacción...',
+    'invoice.set': '📋 Invoice validada. Envía tus BTC a la dirección indicada.',
+    'transaction.mempool': '🔍 Transacción detectada en la red (mempool). Esperando confirmación...',
+    'transaction.confirmed': '✅ Transacción confirmada. Boltz está pagando tu invoice Lightning...',
+    'invoice.pending': '⚡ Pagando invoice Lightning...',
+    'invoice.paid': '💰 Invoice pagada. Completando swap...',
+    'transaction.claim.pending': '🔐 Finalizando swap...',
+    'transaction.claimed': '🎉 ¡Swap completado! Tus fondos fueron enviados.',
+    'invoice.settled': '🎉 ¡Swap completado! Tus fondos fueron enviados.',
+    'invoice.failedToPay': '❌ Error: No se pudo pagar la invoice. Fondos reembolsados.',
+    'swap.expired': '⏰ Swap expirado. Tus fondos serán reembolsados.',
+    'transaction.lockupFailed': '❌ Error en el depósito.',
+    'transaction.failed': '❌ Error. Fondos reembolsados.',
+    'transaction.refunded': '↩️ Fondos reembolsados.',
   };
 
   const msg = labels[status] || ('Estado: ' + status);
