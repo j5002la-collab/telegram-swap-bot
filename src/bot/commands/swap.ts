@@ -393,13 +393,13 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
       const cnClient = getCNClient();
       if (cnClient) {
         try {
-          const ticker = cnClient.getTicker(s.currency, s.sourceChain || 'TRC-20');
-          if (ticker) {
-            const toCurrency = 'btc'; // ChangeNOW only supports BTC on-chain
+          const fromAsset = cnClient.getTicker(s.currency, s.sourceChain || 'TRC-20');
+          const toAsset = cnClient.getBTCDest();
+          if (fromAsset) {
             const fromAmount = String(amount / 100);
             const t0 = Date.now();
-            const estimate = await cnClient.estimate(ticker, toCurrency, fromAmount);
-            logger.debug('Swap: ChangeNOW estimate response', { ticker, toCurrency, ms: Date.now() - t0 });
+            const estimate = await cnClient.estimate(fromAsset.ticker, toAsset.ticker, fromAmount, fromAsset.network, toAsset.network);
+            logger.debug('Swap: ChangeNOW estimate response', { from: `${fromAsset.ticker}:${fromAsset.network}`, to: toAsset.ticker, ms: Date.now() - t0 });
             rateInfo = {
               boltzRate: parseFloat(estimate.estimatedAmount) / parseFloat(fromAmount),
               userRate: parseFloat(estimate.estimatedAmount) / parseFloat(fromAmount),
@@ -594,15 +594,16 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
   }
 
   try {
-    const ticker = cnClient.getTicker(s.currency as 'USDT' | 'USDC', s.sourceChain || 'TRC-20');
-    if (!ticker) { await ctx.editMessageText('Red no soportada.'); clearSs(ctx); return; }
+    const fromAsset = cnClient.getTicker(s.currency as 'USDT' | 'USDC', s.sourceChain || 'TRC-20');
+    if (!fromAsset) { await ctx.editMessageText('Red no soportada.'); clearSs(ctx); return; }
 
-    const toCurrency = 'btc'; // ChangeNOW only supports BTC on-chain
+    const toAsset = cnClient.getBTCDest();
     const fromAmount = String(s.sourceAmount / 100);
-    const estimate = await cnClient.estimate(ticker, toCurrency, fromAmount);
+    const estimate = await cnClient.estimate(fromAsset.ticker, toAsset.ticker, fromAmount, fromAsset.network, toAsset.network);
 
     const exchange = await cnClient.createExchange({
-      fromCurrency: ticker, toCurrency,
+      fromCurrency: fromAsset.ticker, toCurrency: toAsset.ticker,
+      fromNetwork: fromAsset.network, toNetwork: toAsset.network,
       fromAmount, toAmount: estimate.estimatedAmount,
       address: s.destAddress || 'bc1q_required',
       flow: 'fixed-rate', rateId: estimate.rateId,
@@ -647,7 +648,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
       'Intercambio creado!\n\n' +
       'Envia ' + fromAmount + ' ' + (s.currency || 'USDT') + ' (' + (s.sourceChain || '') + ') a:\n\n' +
       '`' + exchange.payinAddress + '`\n\n' +
-      'Recibirás: ~' + estimate.estimatedAmount + ' ' + toCurrency.toUpperCase() + '\n' +
+      'Recibirás: ~' + estimate.estimatedAmount + ' BTC\n' +
       'Al confirmar, se envía automáticamente.',
     );
 
