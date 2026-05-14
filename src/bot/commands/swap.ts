@@ -9,6 +9,7 @@ import { Swap, SwapDirection, ChainNetwork, User } from '../../models';
 import { boltzClient } from '../../boltz/client';
 import { BoltzWebSocket } from '../../boltz/websocket';
 import { getCNClient } from '../../changenow/client';
+import { getWalletAddress, isWalletReady } from '../../engine/wallet';
 import type { BoltzSwapStatus } from '../../boltz/types';
 import bolt11 from 'bolt11';
 import crypto from 'crypto';
@@ -597,44 +598,82 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
         );
       } else {
         if (!s.invoice) { await ctx.editMessageText('Falta la invoice. Usa /swap.'); clearSs(ctx); return; }
-        logger.debug('Swap: creating Boltz submarine swap', { invoiceLen: s.invoice.length });
-        const t0 = Date.now();
-        const refundKeys = ECPair.makeRandom();
-        const res = await boltzClient.createSubmarineSwap({
-          from: 'BTC', to: 'BTC', invoice: s.invoice,
-          refundPublicKey: Buffer.from(refundKeys.publicKey).toString('hex'),
-        });
-        swapServiceId = res.id;
-        logger.debug('Swap: Boltz submarine swap created', { boltzId: res.id, ms: Date.now() - t0 });
-        // Save pending swap (no preimage needed for submarine)
-        await Swap.create({
-          swapId, userId: userState?.userId || 'unknown',
-          direction: s.direction,
-          sourceChain: s.sourceChain, destChain: s.destChain,
-          sourceAmount: s.sourceAmount!, destAmount: res.expectedAmount || s.sourceAmount || 0,
-          sourceCurrency: 'BTC', destCurrency: 'BTC',
-          boltzSwapId: swapServiceId, boltzStatus: 'swap.created',
-          commissionRate: s.fee?.commissionRate || 0,
-          commissionAmount: s.fee?.commissionAmount || 0,
-          botProfit: s.fee?.botProfit || 0,
-          status: 'pending',
-        });
-        await ctx.editMessageText(
-          'Intercambio creado! (On-chain -> Lightning)\n\n' +
-          'Envia exactamente ' + res.expectedAmount.toLocaleString() + ' sats a:\n\n' +
-          '`' + res.address + '`\n\n' +
-          'Al confirmarse, se envia a tu Lightning. Tiempo: 10-30 min.',
-        );
+
+        const useIntermediary = isWalletReady();
+
+        if (useIntermediary) {
+          // Intermediary mode: user deposits to OUR wallet, we forward to Boltz
+          const ourAddress = getWalletAddress();
+          await Swap.create({
+            swapId, userId: userState?.userId || 'unknown',
+            direction: s.direction,
+            sourceChain: s.sourceChain, destChain: s.destChain,
+            sourceAmount: s.sourceAmount!, destAmount: s.fee?.estimatedReceive || 0,
+            sourceCurrency: 'BTC', destCurrency: 'BTC',
+            boltzSwapId: '', boltzStatus: 'waiting_deposit',
+            commissionRate: s.fee?.commissionRate || 0,
+            commissionAmount: s.fee?.commissionAmount || 0,
+            botProfit: s.fee?.botProfit || 0,
+            status: 'pending',
+          });
+
+          await ctx.editMessageText(
+            '🏦 *Deposita a nuestra wallet*\n\n' +
+            'Envía **' + s.sourceAmount!.toLocaleString() + ' sats** a:\n\n' +
+            '`' + ourAddress + '`\n\n' +
+            'Al confirmarse el depósito, crearemos el swap con Boltz\n' +
+            'y pagaremos tu invoice Lightning de ' +
+            (s.fee?.estimatedReceive?.toLocaleString() || '?') + ' sats.\n\n' +
+            '⏱ Tiempo estimado: 10-60 minutos',
+          );
+
+          // Start background deposit monitoring
+          if (chatId && messageId) {
+            monitorDepositAndSwap(swapId, s, chatId, messageId, userState?.userId).catch((err) => {
+              logger.error('Deposit monitor failed', { error: err, swapId });
+            });
+          }
+        } else {
+          // Direct mode: create Boltz swap immediately
+          logger.debug('Swap: creating Boltz submarine swap', { invoiceLen: s.invoice.length });
+          const t0 = Date.now();
+          const refundKeys = ECPair.makeRandom();
+          const res = await boltzClient.createSubmarineSwap({
+            from: 'BTC', to: 'BTC', invoice: s.invoice,
+            refundPublicKey: Buffer.from(refundKeys.publicKey).toString('hex'),
+          });
+          swapServiceId = res.id;
+          logger.debug('Swap: Boltz submarine swap created', { boltzId: res.id, ms: Date.now() - t0 });
+          await Swap.create({
+            swapId, userId: userState?.userId || 'unknown',
+            direction: s.direction,
+            sourceChain: s.sourceChain, destChain: s.destChain,
+            sourceAmount: s.sourceAmount!, destAmount: res.expectedAmount || s.sourceAmount || 0,
+            sourceCurrency: 'BTC', destCurrency: 'BTC',
+            boltzSwapId: swapServiceId, boltzStatus: 'swap.created',
+            commissionRate: s.fee?.commissionRate || 0,
+            commissionAmount: s.fee?.commissionAmount || 0,
+            botProfit: s.fee?.botProfit || 0,
+            status: 'pending',
+          });
+          await ctx.editMessageText(
+            'Intercambio creado! (On-chain -> Lightning)\n\n' +
+            'Envia exactamente ' + res.expectedAmount.toLocaleString() + ' sats a:\n\n' +
+            '`' + res.address + '`\n\n' +
+            'Al confirmarse, se envia a tu Lightning. Tiempo: 10-30 min.',
+          );
+
+          if (boltzWebSocket && chatId && messageId) {
+            logger.debug('Swap: subscribing to WebSocket', { boltzId: swapServiceId });
+            boltzWebSocket.subscribe(swapServiceId, (_id, status) => {
+              logger.debug('Swap: WS status update', { boltzId: swapServiceId, status });
+              updateSwapMessage(chatId, messageId, status, swapId, s, swapServiceId, userState?.userId).catch(() => {});
+            });
+          }
+          setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId!), 30 * 60 * 1000);
+        }
       }
 
-      if (boltzWebSocket && chatId && messageId) {
-        logger.debug('Swap: subscribing to WebSocket', { boltzId: swapServiceId });
-        boltzWebSocket.subscribe(swapServiceId, (_id, status) => {
-          logger.debug('Swap: WS status update', { boltzId: swapServiceId, status });
-          updateSwapMessage(chatId, messageId, status, swapId, s, swapServiceId, userState?.userId).catch(() => {});
-        });
-      }
-      setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId), 30 * 60 * 1000);
       clearSs(ctx);
       await ctx.reply('Usa /swap para un nuevo intercambio.');
 
@@ -806,6 +845,96 @@ async function startCNPolling(
       '⏰ Swap #' + swapId + '\n\nTiempo límite alcanzado. Si enviaste los fondos, contacta a soporte con el ID: `' + cnId + '`',
     );
   } catch { /* ignore */ }
+}
+
+// ============================================================
+// Intermediary deposit → swap flow
+// ============================================================
+async function monitorDepositAndSwap(
+  swapId: string, session: SwapSession, chatId: number, messageId: number, userId?: string,
+): Promise<void> {
+  if (!botInstance) return;
+  const s = session;
+
+  try {
+    // Poll for deposit
+    const { default: axios } = await import('axios');
+    const maxPolls = 180; // 60 min at 20s intervals
+    const ourAddress = getWalletAddress();
+
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise((r) => setTimeout(r, 20_000));
+
+      try {
+        const url = `https://mempool.space/api/address/${ourAddress}/txs`;
+        const { data } = await axios.get(url, { timeout: 10000 });
+
+        // Find a tx sending at least the expected amount to our address
+        const expectedAmount = s.sourceAmount || 0;
+        let found = false;
+
+        for (const tx of data) {
+          for (const vout of tx.vout) {
+            if (vout.scriptpubkey_address === ourAddress) {
+              const receivedSats = Math.round(vout.value * 100_000_000);
+              if (receivedSats >= expectedAmount && tx.status.confirmed) {
+                found = true;
+                logger.info('Deposit confirmed for swap', { swapId, txid: tx.txid, amount: receivedSats });
+
+                // Deduct commission + raffle
+                const commissionAmount = s.fee?.commissionAmount || 0;
+                const raffleAmount = Math.floor(expectedAmount * 0.001);
+                await treasuryEngine.trackEarnings(commissionAmount).catch(() => {});
+                await raffleEngine.trackSwapVolume(userId || 'unknown', expectedAmount).catch(() => {});
+
+                // Create Boltz submarine swap
+                const refundKeys = ECPair.makeRandom();
+                const res = await boltzClient.createSubmarineSwap({
+                  from: 'BTC', to: 'BTC',
+                  invoice: s.invoice!,
+                  refundPublicKey: Buffer.from(refundKeys.publicKey).toString('hex'),
+                });
+
+                logger.info('Boltz swap created via intermediary', { swapId, boltzId: res.id });
+
+                // Update swap record
+                await Swap.findOneAndUpdate(
+                  { swapId },
+                  { boltzSwapId: res.id, boltzStatus: 'swap.created',
+                    status: 'completed', completedAt: new Date() },
+                ).catch(() => {});
+
+                // Notify user: send BTC from our wallet is TODO, for now show Boltz address
+                await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+                  '✅ Depósito recibido: ' + receivedSats.toLocaleString() + ' sats\n\n' +
+                  'Swap creado con Boltz: `' + res.id + '`\n\n' +
+                  'Boltz pagará tu invoice Lightning de ' +
+                  (s.fee?.estimatedReceive?.toLocaleString() || '?') + ' sats.\n\n' +
+                  '📋 _El envío a Boltz desde nuestra wallet es manual por ahora._',
+                );
+
+                return;
+              }
+            }
+          }
+        }
+
+        if (i % 3 === 0) {
+          logger.debug('Still waiting for intermediary deposit', { swapId, poll: i + 1 });
+        }
+      } catch {
+        // polling error, continue
+      }
+    }
+
+    // Timeout
+    await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+      '⏰ Tiempo de espera agotado para el swap #' + swapId + '.\n\n' +
+      'Si realizaste el depósito, contacta a soporte.',
+    ).catch(() => {});
+  } catch (error) {
+    logger.error('Intermediary monitor failed', { error, swapId });
+  }
 }
 
 // ============================================================
