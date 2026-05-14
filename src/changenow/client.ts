@@ -22,6 +22,8 @@ export interface CNEstimateResponse {
 export interface CNCreateRequest {
   fromCurrency: string;
   toCurrency: string;
+  fromNetwork?: string;
+  toNetwork?: string;
   fromAmount: string;
   toAmount: string;
   address: string;
@@ -52,27 +54,28 @@ export interface CNStatusResponse {
   payoutHash?: string;
 }
 
-// Network → ChangeNOW ticker mapping
-export const USDT_NETWORKS: Record<string, string> = {
-  'TRC-20': 'usdttrc',
-  'ERC-20': 'usdterc20',
-  'BEP-20': 'usdtbsc',
-  'ARBITRUM': 'usdtarbitrum',
-  'SOLANA': 'usdtsol',
-  'POLYGON': 'usdtmatic',
-  'OPTIMISM': 'usdtop',
-  'AVALANCHE': 'usdtavaxc',
-  'BASE': 'usdtbase',
+// Network → { ticker, network } mapping for ChangeNOW v2
+// ChangeNOW v2 requires separate fromNetwork/toNetwork params, NOT legacy tickers
+export const USDT_NETWORKS: Record<string, { ticker: string; network: string }> = {
+  'TRC-20':    { ticker: 'usdt', network: 'trc20' },
+  'ERC-20':    { ticker: 'usdt', network: 'eth' },
+  'BEP-20':    { ticker: 'usdt', network: 'bsc' },
+  'ARBITRUM':  { ticker: 'usdt', network: 'arbitrum' },
+  'SOLANA':    { ticker: 'usdt', network: 'sol' },
+  'POLYGON':   { ticker: 'usdt', network: 'matic' },
+  'OPTIMISM':  { ticker: 'usdt', network: 'op' },
+  'AVALANCHE': { ticker: 'usdt', network: 'avaxc' },
+  'BASE':      { ticker: 'usdt', network: 'base' },
 };
 
-export const USDC_NETWORKS: Record<string, string> = {
-  'ERC-20': 'usdcerc20',
-  'ARBITRUM': 'usdcarbitrum',
-  'BASE': 'usdcbase',
-  'SOLANA': 'usdcsol',
-  'POLYGON': 'usdcpolygon',
-  'OPTIMISM': 'usdcop',
-  'AVALANCHE': 'usdcavaxc',
+export const USDC_NETWORKS: Record<string, { ticker: string; network: string }> = {
+  'ERC-20':    { ticker: 'usdc', network: 'eth' },
+  'ARBITRUM':  { ticker: 'usdc', network: 'arbitrum' },
+  'BASE':      { ticker: 'usdc', network: 'base' },
+  'SOLANA':    { ticker: 'usdc', network: 'sol' },
+  'POLYGON':   { ticker: 'usdc', network: 'matic' },
+  'OPTIMISM':  { ticker: 'usdc', network: 'op' },
+  'AVALANCHE': { ticker: 'usdc', network: 'avaxc' },
 };
 
 export class ChangeNowClient {
@@ -111,17 +114,19 @@ export class ChangeNowClient {
     return data;
   }
 
-  async getMinAmount(fromCurrency: string, toCurrency: string): Promise<string> {
-    const { data } = await this.http.get('/exchange/min-amount', {
-      params: { fromCurrency, toCurrency, flow: 'fixed-rate' },
-    });
+  async getMinAmount(fromCurrency: string, toCurrency: string, fromNetwork?: string, toNetwork?: string): Promise<string> {
+    const params: Record<string, string> = { fromCurrency, toCurrency, flow: 'fixed-rate' };
+    if (fromNetwork) params.fromNetwork = fromNetwork;
+    if (toNetwork) params.toNetwork = toNetwork;
+    const { data } = await this.http.get('/exchange/min-amount', { params });
     return data.minAmount;
   }
 
-  async estimate(fromCurrency: string, toCurrency: string, fromAmount: string): Promise<CNEstimateResponse> {
-    const { data } = await this.http.get('/exchange/estimated-amount', {
-      params: { fromCurrency, toCurrency, fromAmount, flow: 'fixed-rate' },
-    });
+  async estimate(fromCurrency: string, toCurrency: string, fromAmount: string, fromNetwork?: string, toNetwork?: string): Promise<CNEstimateResponse> {
+    const params: Record<string, string> = { fromCurrency, toCurrency, fromAmount, flow: 'fixed-rate' };
+    if (fromNetwork) params.fromNetwork = fromNetwork;
+    if (toNetwork) params.toNetwork = toNetwork;
+    const { data } = await this.http.get('/exchange/estimated-amount', { params });
     return data;
   }
 
@@ -141,11 +146,16 @@ export class ChangeNowClient {
     return data;
   }
 
-  /** Map our internal chain ID to ChangeNOW ticker */
-  getTicker(currency: 'USDT' | 'USDC', network: string): string | null {
+  /** Map our internal chain ID to ChangeNOW { ticker, network } pair */
+  getTicker(currency: 'USDT' | 'USDC', network: string): { ticker: string; network: string } | null {
     if (currency === 'USDT') return USDT_NETWORKS[network] || null;
     if (currency === 'USDC') return USDC_NETWORKS[network] || null;
     return null;
+  }
+
+  /** BTC destination network */
+  getBTCDest(): { ticker: string; network: string } {
+    return { ticker: 'btc', network: 'btc' };
   }
 }
 
