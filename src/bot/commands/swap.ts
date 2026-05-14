@@ -5,7 +5,7 @@ import { raffleEngine } from '../../engine/raffle';
 import { treasuryEngine } from '../../engine/treasury';
 import { getUserState } from '../middleware/user';
 import { logger } from '../../utils/logger';
-import { Swap, SwapDirection, ChainNetwork } from '../../models';
+import { Swap, SwapDirection, ChainNetwork, User } from '../../models';
 import { boltzClient } from '../../boltz/client';
 import { BoltzWebSocket } from '../../boltz/websocket';
 import { getCNClient } from '../../changenow/client';
@@ -488,6 +488,13 @@ async function updateSwapMessage(
         botProfit: session.fee?.botProfit || 0,
         status: 'completed', completedAt: new Date(),
       });
+      // Increment user swap counter and volume
+      if (userId && userId !== 'unknown') {
+        User.findOneAndUpdate(
+          { telegramId: userId },
+          { $inc: { swapsCount: 1, totalVolume: session.sourceAmount || 0 } },
+        ).catch((err) => logger.error('Failed to update user stats', { error: err, userId }));
+      }
       if (session.fee) {
         raffleEngine.trackSwapVolume(userId || 'unknown', session.sourceAmount!).catch(() => {});
         treasuryEngine.trackEarnings(session.fee.commissionAmount).catch(() => {});
