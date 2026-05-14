@@ -589,30 +589,20 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
           preimage: preimageHex,
           status: 'pending',
         });
-        await ctx.editMessageText('Intercambio creado! 🎉');
-        const invMsg = await ctx.reply(
-          '⚡ *Paga esta invoice desde tu wallet Lightning:*\n\n' +
+        await ctx.editMessageText(
+          'Intercambio creado! (Lightning -> On-chain)\n\n' +
+          'Paga esta invoice desde tu wallet Lightning:\n\n' +
           '`' + res.invoice + '`\n\n' +
-          '📥 Monto: **' + s.sourceAmount!.toLocaleString() + ' sats**\n' +
-          '⏳ _Al pagar, se completa solo. Tiempo: 1-5 min._',
+          'Monto: ' + s.sourceAmount.toLocaleString() + ' sats\n' +
+          'Al pagar, se completa solo. Tiempo: 1-5 min.',
         );
-        const invChatId = invMsg.chat.id;
-        const invMessageId = invMsg.message_id;
-        if (boltzWebSocket && invChatId && invMessageId) {
-          boltzWebSocket.subscribe(swapServiceId, (_id, status) => {
-            updateSwapMessage(invChatId, invMessageId, status, swapId, s, swapServiceId, userState?.userId).catch(() => {});
-          });
-        }
-        setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId!), 30 * 60 * 1000);
+      } else {
         if (!s.invoice) { await ctx.editMessageText('Falta la invoice. Usa /swap.'); clearSs(ctx); return; }
 
-        // Intermediary mode disabled for now — use direct Boltz
-        // TODO: re-enable when deposit monitoring + auto-send is stable
-        const useIntermediary = false; // isWalletReady();
+        const useIntermediary = false; // disabled — deposit monitoring needs debugging
 
         if (useIntermediary) {
           // Intermediary mode: user deposits to OUR wallet, we forward to Boltz
-          logger.debug('Swap: using intermediary mode', { swapId, ourAddress: getWalletAddress() });
           const ourAddress = getWalletAddress();
           await Swap.create({
             swapId, userId: userState?.userId || 'unknown',
@@ -627,8 +617,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
             status: 'pending',
           });
 
-          await ctx.editMessageText('Intercambio creado! 🎉');
-          const depositMsg = await ctx.reply(
+          await ctx.editMessageText(
             '🏦 *Deposita a nuestra wallet*\n\n' +
             'Envía **' + s.sourceAmount!.toLocaleString() + ' sats** a:\n\n' +
             '`' + ourAddress + '`\n\n' +
@@ -638,11 +627,9 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
             '⏱ Tiempo estimado: 10-60 minutos',
           );
 
-          // Start background deposit monitoring on the new message
-          const dChatId = depositMsg.chat.id;
-          const dMessageId = depositMsg.message_id;
-          if (dChatId && dMessageId) {
-            monitorDepositAndSwap(swapId, s, dChatId, dMessageId, userState?.userId).catch((err) => {
+          // Start background deposit monitoring
+          if (chatId && messageId) {
+            monitorDepositAndSwap(swapId, s, chatId, messageId, userState?.userId).catch((err) => {
               logger.error('Deposit monitor failed', { error: err, swapId });
             });
           }
@@ -670,8 +657,10 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
             status: 'pending',
           });
 
-          // Send address in a NEW persistent message, edit confirm to brief
-          await ctx.editMessageText('Intercambio creado! 🎉');
+          // Brief confirm on original message
+          await ctx.editMessageText('✅ Intercambio creado!');
+
+          // Send address in NEW persistent message
           const addrMsg = await ctx.reply(
             '📤 *Envía exactamente* **' + res.expectedAmount.toLocaleString() + ' sats** a:\n\n' +
             '`' + res.address + '`\n\n' +
@@ -679,16 +668,16 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
           );
 
           // Use the NEW message for WebSocket status updates
-          const addrChatId = addrMsg.chat.id;
-          const addrMessageId = addrMsg.message_id;
-          if (boltzWebSocket && addrChatId && addrMessageId) {
+          if (boltzWebSocket && addrMsg.message_id) {
+            const wsChatId = addrMsg.chat.id;
+            const wsMsgId = addrMsg.message_id;
             logger.debug('Swap: subscribing to WebSocket', { boltzId: swapServiceId });
             boltzWebSocket.subscribe(swapServiceId, (_id, status) => {
               logger.debug('Swap: WS status update', { boltzId: swapServiceId, status });
-              updateSwapMessage(addrChatId, addrMessageId, status, swapId, s, swapServiceId, userState?.userId).catch(() => {});
+              updateSwapMessage(wsChatId, wsMsgId, status, swapId, s, swapServiceId, userState?.userId).catch(() => {});
             });
+            setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId!), 30 * 60 * 1000);
           }
-          setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId!), 30 * 60 * 1000);
         }
       }
 
