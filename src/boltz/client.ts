@@ -62,25 +62,21 @@ export class BoltzClient {
     return this.proEnabled ? { Referral: 'pro' } : {};
   }
 
-  // --- Pairs ---
+  // --- Pairs (always regular mode for accurate limits) ---
+  // Pro mode only affects swap creation, not pair fetching.
+  // Submarine Pro pairs have 1M sat minimum vs 25k regular.
   async getSubmarinePairs(): Promise<SubmarinePairs> {
-    const { data } = await this.http.get<SubmarinePairs>('/swap/submarine', {
-      headers: this.proHeaders(),
-    });
+    const { data } = await this.http.get<SubmarinePairs>('/swap/submarine');
     return data;
   }
 
   async getReversePairs(): Promise<ReversePairs> {
-    const { data } = await this.http.get<ReversePairs>('/swap/reverse', {
-      headers: this.proHeaders(),
-    });
+    const { data } = await this.http.get<ReversePairs>('/swap/reverse');
     return data;
   }
 
   async getChainPairs(): Promise<ChainPairs> {
-    const { data } = await this.http.get<ChainPairs>('/swap/chain', {
-      headers: this.proHeaders(),
-    });
+    const { data } = await this.http.get<ChainPairs>('/swap/chain');
     return data;
   }
 
