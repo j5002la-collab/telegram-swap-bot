@@ -179,12 +179,18 @@ async function showDirectionMenu(ctx: Context): Promise<void> {
       [Markup.button.callback('Cancelar', 'swap_cancel')],
     ]));
   } else {
+    // ChangeNOW only supports BTC on-chain — skip direction, go to address
     const cur = s.currency || 'USDT';
-    await ctx.editMessageText(cur + ' -> Selecciona destino:', Markup.inlineKeyboard([
-      [Markup.button.callback('Recibir en Lightning', 'swap_dir_ONCHAIN2LN')],
-      [Markup.button.callback('Recibir en BTC On-chain', 'swap_dir_LN2ONCHAIN')],
-      [Markup.button.callback('Cancelar', 'swap_cancel')],
-    ]));
+    s.step = 'address';
+    s.direction = 'LN2ONCHAIN';
+    s.destChain = 'BTC';
+    setSs(ctx, s);
+    logger.debug('Swap: ChangeNOW → direct to address', { currency: cur, sourceChain: s.sourceChain });
+    await ctx.editMessageText(
+      cur + ' → BTC (on-chain)\n\n' +
+      'Pega tu dirección BTC (bc1...) donde recibirás los fondos.',
+      Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
+    );
   }
 }
 
@@ -389,7 +395,7 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
         try {
           const ticker = cnClient.getTicker(s.currency, s.sourceChain || 'TRC-20');
           if (ticker) {
-            const toCurrency = s.destChain === 'LIGHTNING' ? 'btcln' : 'btc';
+            const toCurrency = 'btc'; // ChangeNOW only supports BTC on-chain
             const fromAmount = String(amount / 100);
             const t0 = Date.now();
             const estimate = await cnClient.estimate(ticker, toCurrency, fromAmount);
@@ -591,7 +597,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
     const ticker = cnClient.getTicker(s.currency as 'USDT' | 'USDC', s.sourceChain || 'TRC-20');
     if (!ticker) { await ctx.editMessageText('Red no soportada.'); clearSs(ctx); return; }
 
-    const toCurrency = s.destChain === 'LIGHTNING' ? 'btcln' : 'btc';
+    const toCurrency = 'btc'; // ChangeNOW only supports BTC on-chain
     const fromAmount = String(s.sourceAmount / 100);
     const estimate = await cnClient.estimate(ticker, toCurrency, fromAmount);
 
