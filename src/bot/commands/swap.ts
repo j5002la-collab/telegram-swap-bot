@@ -318,24 +318,82 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
   if (!s) return;
 
   try {
-    const fee = commissionEngine.calculateFeeBreakdown(amount, {
-      boltzRate: 1, userRate: 0.97, boltzFeePct: 0.5, boltzMinerFee: 302,
-      botCommissionPct: commissionEngine.getCommissionRate(), botCommissionAmount: 0,
-      minAmount: 25000, maxAmount: 25000000, pairHash: '',
-    });
+    // --- Fetch real rates depending on currency ---
+    let rateInfo: RateInfo | null = null;
+    const isBTC = s.currency === 'BTC';
 
-    if (amount < 25000) { await ctx.reply('Monto muy bajo. Mínimo 25,000.'); return; }
-    if (amount > 25000000) { await ctx.reply('Monto muy alto. Máximo 25,000,000.'); return; }
+    if (isBTC) {
+      const isReverse = s.direction === 'LN2ONCHAIN';
+      rateInfo = await rateEngine.getRate(
+        isReverse ? 'reverse' : 'submarine',
+        'BTC',
+        'BTC',
+      );
+    } else if (s.currency === 'USDT' || s.currency === 'USDC') {
+      // USDT/USDC: attempt ChangeNOW estimate for real rate display
+      const cnClient = getCNClient();
+      if (cnClient) {
+        try {
+          const ticker = cnClient.getTicker(s.currency, s.sourceChain || 'TRC-20');
+          if (ticker) {
+            const toCurrency = s.destChain === 'LIGHTNING' ? 'btcln' : 'btc';
+            const fromAmount = String(amount / 100);
+            const estimate = await cnClient.estimate(ticker, toCurrency, fromAmount);
+            rateInfo = {
+              boltzRate: parseFloat(estimate.estimatedAmount) / parseFloat(fromAmount),
+              userRate: parseFloat(estimate.estimatedAmount) / parseFloat(fromAmount),
+              boltzFeePct: 0.5, // ChangeNOW fixed-rate fee
+              boltzMinerFee: 0,
+              botCommissionPct: commissionEngine.getCommissionRate(),
+              botCommissionAmount: 0,
+              minAmount: 1000,  // ~$10 in cents
+              maxAmount: 2000000, // ~$20,000 in cents
+              pairHash: estimate.rateId,
+            };
+          }
+        } catch {
+          logger.warn('ChangeNOW estimate failed for rate display, using defaults');
+        }
+      }
+    }
+
+    // Fallback when rate fetch fails
+    if (!rateInfo) {
+      rateInfo = {
+        boltzRate: 1,
+        userRate: 0.97,
+        boltzFeePct: 0.5,
+        boltzMinerFee: isBTC ? 302 : 0,
+        botCommissionPct: commissionEngine.getCommissionRate(),
+        botCommissionAmount: 0,
+        minAmount: isBTC ? 25000 : 1000,
+        maxAmount: isBTC ? 25000000 : 2000000,
+        pairHash: '',
+      };
+    }
+
+    // Validate amount against limits
+    if (amount < rateInfo.minAmount) {
+      await ctx.reply(`Monto muy bajo. Mínimo ${rateInfo.minAmount.toLocaleString()}.`);
+      return;
+    }
+    if (amount > rateInfo.maxAmount) {
+      await ctx.reply(`Monto muy alto. Máximo ${rateInfo.maxAmount.toLocaleString()}.`);
+      return;
+    }
 
     s.sourceAmount = amount;
-    s.fee = fee;
+    s.rateInfo = rateInfo;
+    s.fee = commissionEngine.calculateFeeBreakdown(amount, rateInfo);
     s.step = 'confirm';
     setSs(ctx, s);
 
-    const msg = commissionEngine.formatBreakdown(fee, 'sats', 'sats');
+    const sourceLabel = isBTC ? 'sats' : (s.currency || 'USDT');
+    const destLabel = isBTC ? 'sats' : 'BTC';
+    const msg = commissionEngine.formatBreakdown(s.fee, sourceLabel, destLabel);
 
     await ctx.reply(msg, Markup.inlineKeyboard([
-      [Markup.button.callback('Confirmar', 'swap_confirm'), Markup.button.callback('Cancelar', 'swap_cancel')],
+      [Markup.button.callback('✅ Confirmar', 'swap_confirm'), Markup.button.callback('❌ Cancelar', 'swap_cancel')],
     ]));
   } catch (error) {
     logger.error('Process amount error', { error });
@@ -368,9 +426,11 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
     try {
       const isReverse = s.direction === 'LN2ONCHAIN';
       let swapServiceId: string;
+      let preimageHex: string | undefined;
 
       if (isReverse) {
         const preimage = crypto.randomBytes(32);
+        preimageHex = preimage.toString('hex');
         const key = crypto.randomBytes(32).toString('hex');
         const res = await boltzClient.createReverseSwap({
           from: 'BTC', to: 'BTC', invoiceAmount: s.sourceAmount,
@@ -378,6 +438,20 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
           preimageHash: crypto.createHash('sha256').update(preimage).digest('hex'),
         });
         swapServiceId = res.id;
+        // Save pending swap with preimage for recovery
+        await Swap.create({
+          swapId, userId: userState?.userId || 'unknown',
+          direction: s.direction,
+          sourceChain: s.sourceChain, destChain: s.destChain,
+          sourceAmount: s.sourceAmount!, destAmount: res.expectedAmount,
+          sourceCurrency: 'BTC', destCurrency: 'BTC',
+          boltzSwapId: swapServiceId, boltzStatus: 'swap.created',
+          commissionRate: s.fee?.commissionRate || 0,
+          commissionAmount: s.fee?.commissionAmount || 0,
+          botProfit: s.fee?.botProfit || 0,
+          preimage: preimageHex,
+          status: 'pending',
+        });
         await ctx.editMessageText(
           'Intercambio creado! (Lightning -> On-chain)\n\n' +
           'Paga esta invoice desde tu wallet Lightning:\n\n' +
@@ -392,6 +466,19 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
           refundPublicKey: crypto.randomBytes(32).toString('hex'),
         });
         swapServiceId = res.id;
+        // Save pending swap (no preimage needed for submarine)
+        await Swap.create({
+          swapId, userId: userState?.userId || 'unknown',
+          direction: s.direction,
+          sourceChain: s.sourceChain, destChain: s.destChain,
+          sourceAmount: s.sourceAmount!, destAmount: res.expectedAmount,
+          sourceCurrency: 'BTC', destCurrency: 'BTC',
+          boltzSwapId: swapServiceId, boltzStatus: 'swap.created',
+          commissionRate: s.fee?.commissionRate || 0,
+          commissionAmount: s.fee?.commissionAmount || 0,
+          botProfit: s.fee?.botProfit || 0,
+          status: 'pending',
+        });
         await ctx.editMessageText(
           'Intercambio creado! (On-chain -> Lightning)\n\n' +
           'Envia exactamente ' + res.expectedAmount.toLocaleString() + ' sats a:\n\n' +
@@ -405,7 +492,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
           updateSwapMessage(chatId, messageId, status, swapId, s, swapServiceId, userState?.userId).catch(() => {});
         });
       }
-      setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId!), 30 * 60 * 1000);
+      setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId), 30 * 60 * 1000);
       clearSs(ctx);
       await ctx.reply('Usa /swap para un nuevo intercambio.');
 
@@ -444,6 +531,41 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
       address: s.destAddress || 'bc1q_required',
       flow: 'fixed-rate', rateId: estimate.rateId,
     });
+
+    // Persist swap record for ChangeNOW exchanges
+    try {
+      await Swap.create({
+        swapId,
+        userId: userState?.userId || 'unknown',
+        direction: s.direction,
+        sourceChain: s.sourceChain,
+        destChain: s.destChain,
+        sourceAmount: Math.round(parseFloat(fromAmount) * 100),
+        destAmount: Math.round(parseFloat(estimate.estimatedAmount) * 100_000_000),
+        sourceCurrency: s.currency || 'USDT',
+        destCurrency: 'BTC',
+        boltzSwapId: exchange.id,
+        boltzStatus: 'waiting',
+        commissionRate: s.fee?.commissionRate || commissionEngine.getCommissionRate(),
+        commissionAmount: s.fee?.commissionAmount || 0,
+        botProfit: s.fee?.botProfit || 0,
+        status: 'pending',
+      });
+    } catch (dbError) {
+      logger.error('Failed to persist ChangeNOW swap record', { error: dbError, swapId });
+    }
+
+    // Track earnings and raffle for ChangeNOW swaps too
+    if (s.fee) {
+      raffleEngine.trackSwapVolume(userState?.userId || 'unknown', s.sourceAmount!).catch((err) => {
+        logger.error('Raffle tracking failed for CN swap', { error: err, swapId });
+      });
+      treasuryEngine.trackEarnings(s.fee.commissionAmount).catch((err) => {
+        logger.error('Treasury tracking failed for CN swap', { error: err, swapId });
+      });
+    }
+
+    clearSs(ctx);
 
     await ctx.editMessageText(
       'Intercambio creado!\n\n' +
@@ -493,18 +615,17 @@ async function updateSwapMessage(
       'Intercambio: ' + swapId + '\n\n' + msg);
 
     if (status === 'transaction.claimed' || status === 'invoice.settled') {
-      await Swap.create({
-        swapId, userId: userId || 'unknown',
-        direction: session.direction,
-        sourceChain: session.sourceChain, destChain: session.destChain,
-        sourceAmount: session.sourceAmount, destAmount: session.fee?.estimatedReceive || 0,
-        sourceCurrency: 'BTC', destCurrency: 'BTC',
-        boltzSwapId: swapServiceId, boltzStatus: status,
-        commissionRate: session.fee?.commissionRate || 0,
-        commissionAmount: session.fee?.commissionAmount || 0,
-        botProfit: session.fee?.botProfit || 0,
-        status: 'completed', completedAt: new Date(),
-      });
+      // Update the pending swap record (created at swap initiation)
+      await Swap.findOneAndUpdate(
+        { swapId },
+        {
+          boltzStatus: status,
+          destAmount: session.fee?.estimatedReceive || 0,
+          status: 'completed',
+          completedAt: new Date(),
+        },
+        { upsert: true },
+      );
       // Increment user swap counter and volume
       if (userId && userId !== 'unknown') {
         User.findOneAndUpdate(
@@ -513,8 +634,12 @@ async function updateSwapMessage(
         ).catch((err) => logger.error('Failed to update user stats', { error: err, userId }));
       }
       if (session.fee) {
-        raffleEngine.trackSwapVolume(userId || 'unknown', session.sourceAmount!).catch(() => {});
-        treasuryEngine.trackEarnings(session.fee.commissionAmount).catch(() => {});
+        raffleEngine.trackSwapVolume(userId || 'unknown', session.sourceAmount!).catch((err) => {
+          logger.error('Raffle tracking failed', { error: err, swapId });
+        });
+        treasuryEngine.trackEarnings(session.fee.commissionAmount).catch((err) => {
+          logger.error('Treasury tracking failed', { error: err, swapId });
+        });
       }
     }
   } catch { /* message deleted */ }
