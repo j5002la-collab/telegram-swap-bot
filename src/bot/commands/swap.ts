@@ -151,11 +151,13 @@ export async function handleSwapNetwork(ctx: Context): Promise<void> {
   if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
   await ctx.answerCbQuery();
   const data = ctx.callbackQuery.data;
+  logger.debug('Swap: network selected', { data, userId: ctx.from?.id });
   if (data === 'swap_cancel') { clearSs(ctx); await ctx.editMessageText('Cancelado.'); return; }
   const s = ss(ctx); if (!s) return;
   s.sourceChain = data.replace('swap_net_', '') as ChainNetwork;
   s.step = 'direction';
   setSs(ctx, s);
+  logger.debug('Swap: network → direction menu', { sourceChain: s.sourceChain, currency: s.currency, userId: ctx.from?.id });
   await showDirectionMenu(ctx);
 }
 
@@ -192,6 +194,7 @@ export async function handleSwapDirection(ctx: Context): Promise<void> {
   const s = ss(ctx); if (!s) return;
   s.direction = dir;
   s.destChain = dir === 'LN2ONCHAIN' ? 'BTC' : 'LIGHTNING';
+  logger.debug('Swap: direction selected', { direction: dir, currency: s.currency, destChain: s.destChain, userId: ctx.from?.id });
 
   if (s.currency === 'BTC' && dir === 'ONCHAIN2LN') {
     s.step = 'invoice';
@@ -204,6 +207,7 @@ export async function handleSwapDirection(ctx: Context): Promise<void> {
     s.step = 'address';
     setSs(ctx, s);
     const destType = s.destChain === 'LIGHTNING' ? 'Lightning (invoice lnbc...)' : 'BTC On-chain (bc1...)';
+    logger.debug('Swap: direction → waiting for address', { destType, step: 'address', userId: ctx.from?.id });
     await ctx.editMessageText(
        'Dirección ' + destType + ':\n\nPega la dirección donde recibirás los fondos.',
       Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
@@ -224,9 +228,14 @@ export async function handleSwapDirection(ctx: Context): Promise<void> {
 export async function handleSwapInvoice(ctx: Context): Promise<void> {
   if (!ctx.message || !('text' in ctx.message)) return;
   const s = ss(ctx);
-  if (!s || s.step !== 'invoice') return; // Only handle when actively waiting for invoice
-
   const raw = ctx.message.text.trim();
+  logger.debug('📥 handleSwapInvoice fired', { step: s?.step, isInvoice: raw.startsWith('ln'), userId: ctx.from?.id });
+  if (!s || s.step !== 'invoice') {
+    if (raw.startsWith('lnbc') && s) {
+      logger.warn('handleSwapInvoice: session step mismatch', { step: s.step, expected: 'invoice' });
+    }
+    return;
+  }
 
   // Reject testnet/regtest invoices — only mainnet (lnbc) accepted
   if (raw.startsWith('lntb') || raw.startsWith('lnbcrt')) {
@@ -267,6 +276,7 @@ export async function handleSwapInvoice(ctx: Context): Promise<void> {
 export async function handleSwapAddress(ctx: Context): Promise<void> {
   if (!ctx.message || !('text' in ctx.message)) return;
   const s = ss(ctx);
+  logger.debug('📥 handleSwapAddress fired', { step: s?.step, userId: ctx.from?.id });
   if (!s || s.step !== 'address') return;
 
   const raw = ctx.message.text.trim();
@@ -295,6 +305,7 @@ export async function handleSwapAddress(ctx: Context): Promise<void> {
 export async function handleSwapAmount(ctx: Context): Promise<void> {
   if (!ctx.message || !('text' in ctx.message)) return;
   const s = ss(ctx);
+  logger.debug('📥 handleSwapAmount fired', { step: s?.step, userId: ctx.from?.id });
   if (!s || s.step !== 'amount') return; // Only handle when waiting for amount
 
   // Skip Lightning invoices (handled by handleSwapInvoice); reject testnet
