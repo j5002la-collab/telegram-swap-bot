@@ -46,6 +46,12 @@ export function createBot(boltzWs?: BoltzWebSocket): Telegraf<Context> {
   bot.on('text', handleSwapAmount);
   bot.on('text', handleCalcText);
 
+  // Debug: log every message
+  bot.use(async (ctx, next) => {
+    logger.debug('MSG', { from: ctx.from?.first_name, text: ctx.message && 'text' in ctx.message ? ctx.message.text?.slice(0, 50) : '', update: ctx.updateType });
+    await next();
+  });
+
   // Error handler
   bot.catch((err: unknown, ctx: Context) => {
     logger.error('Bot error', {
