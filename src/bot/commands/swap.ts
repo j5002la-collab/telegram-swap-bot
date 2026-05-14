@@ -225,8 +225,8 @@ export async function handleSwapDirection(ctx: Context): Promise<void> {
 // ============================================================
 // Step 3: Invoice (submarine) → auto-detect amount
 // ============================================================
-export async function handleSwapInvoice(ctx: Context): Promise<void> {
-  if (!ctx.message || !('text' in ctx.message)) return;
+export async function handleSwapInvoice(ctx: Context, next: () => Promise<void>): Promise<void> {
+  if (!ctx.message || !('text' in ctx.message)) return next();
   const s = ss(ctx);
   const raw = ctx.message.text.trim();
   logger.debug('📥 handleSwapInvoice fired', { step: s?.step, isInvoice: raw.startsWith('ln'), userId: ctx.from?.id });
@@ -234,7 +234,7 @@ export async function handleSwapInvoice(ctx: Context): Promise<void> {
     if (raw.startsWith('lnbc') && s) {
       logger.warn('handleSwapInvoice: session step mismatch', { step: s.step, expected: 'invoice' });
     }
-    return;
+    return next(); // ← let next handler try
   }
 
   // Reject testnet/regtest invoices — only mainnet (lnbc) accepted
@@ -273,11 +273,11 @@ export async function handleSwapInvoice(ctx: Context): Promise<void> {
 // ============================================================
 // Step 4: Address (USDT/USDC) + Amount
 // ============================================================
-export async function handleSwapAddress(ctx: Context): Promise<void> {
-  if (!ctx.message || !('text' in ctx.message)) return;
+export async function handleSwapAddress(ctx: Context, next: () => Promise<void>): Promise<void> {
+  if (!ctx.message || !('text' in ctx.message)) return next();
   const s = ss(ctx);
   logger.debug('📥 handleSwapAddress fired', { step: s?.step, userId: ctx.from?.id });
-  if (!s || s.step !== 'address') return;
+  if (!s || s.step !== 'address') return next(); // ← let next handler try
 
   const raw = ctx.message.text.trim();
   if (!raw || raw.length < 10) {
@@ -302,11 +302,11 @@ export async function handleSwapAddress(ctx: Context): Promise<void> {
   );
 }
 
-export async function handleSwapAmount(ctx: Context): Promise<void> {
-  if (!ctx.message || !('text' in ctx.message)) return;
+export async function handleSwapAmount(ctx: Context, next: () => Promise<void>): Promise<void> {
+  if (!ctx.message || !('text' in ctx.message)) return next();
   const s = ss(ctx);
   logger.debug('📥 handleSwapAmount fired', { step: s?.step, userId: ctx.from?.id });
-  if (!s || s.step !== 'amount') return; // Only handle when waiting for amount
+  if (!s || s.step !== 'amount') return next(); // ← let next handler try
 
   // Skip Lightning invoices (handled by handleSwapInvoice); reject testnet
   const raw = ctx.message.text.trim();
