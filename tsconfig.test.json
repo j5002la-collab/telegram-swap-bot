@@ -5,9 +5,7 @@
     "lib": ["ES2022"],
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "strict": false,
-    "noImplicitAny": false,
-    "suppressImplicitAnyIndexErrors": true,
+    "strict": true,
     "resolveJsonModule": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]

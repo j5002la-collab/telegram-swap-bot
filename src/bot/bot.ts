@@ -3,7 +3,7 @@ import { Telegraf, Context } from 'telegraf';
 import { config } from '../utils/config';
 import { logger } from '../utils/logger';
 import { userMiddleware } from './middleware/user';
-import { startCommand, handleStartCallback } from './commands/start';
+import { startCommand, handleStartCallback, showRates } from './commands/start';
 import { helpCommand } from './commands/help';
 import { swapCommand, handleSwapCurrency, handleSwapNetwork, handleSwapDirection, handleSwapAddress, handleSwapAmount, handleSwapConfirm, cancelCommand } from './commands/swap';
 import { calcCommand, handleCalcText } from './commands/calc';
@@ -32,6 +32,7 @@ export function createBot(boltzWs?: BoltzWebSocket): Telegraf<Context> {
   bot.command('raffle', raffleCommand);
   bot.command('admin', adminCommand);
   bot.command('cancel', cancelCommand);
+  bot.command('rates', showRates);
 
   // Callback handlers — swap flow
   bot.action(/^swap_cur_/, handleSwapCurrency);
@@ -40,6 +41,7 @@ export function createBot(boltzWs?: BoltzWebSocket): Telegraf<Context> {
   bot.action(/^swap_confirm$|^swap_cancel$/, handleSwapConfirm);
   bot.action('raffle_winners', handleRaffleWinners);
   bot.action('admin_force_raffle', handleAdminForceRaffle);
+  bot.action('show_rates', (ctx) => { ctx.answerCbQuery(); return showRates(ctx); });
   bot.action(/^(start_swap|show_calc|show_raffle|show_help)$/, handleStartCallback);
 
   // Text handler for swap amount + calc input
