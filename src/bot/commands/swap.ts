@@ -447,15 +447,81 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
       return;
     }
 
-    s.sourceAmount = amount;
+    const isSubmarine = s.direction === 'ONCHAIN2LN';
+    const isReverse = s.direction === 'LN2ONCHAIN';
+
+    let sourceAmount: number;
+    let receiveAmount: number;
+    let fee: FeeBreakdown;
+
+    if (isBTC && isSubmarine) {
+      // Submarine: user sends on-chain, receives Lightning.
+      // 'amount' is the invoice amount (what user RECEIVES).
+      // We must calculate how much they need to SEND to cover fees.
+      const invoiceAmount = amount;
+      const totalFeePct = rateInfo.botCommissionPct + rateInfo.boltzFeePct;
+      // sourceAmount = (invoiceAmount + minerFee) / (1 - totalFeePct/100)
+      sourceAmount = Math.ceil((invoiceAmount + rateInfo.boltzMinerFee) / (1 - totalFeePct / 100));
+      receiveAmount = invoiceAmount;
+
+      // Calculate actual fees based on source amount
+      const commissionAmount = Math.floor(sourceAmount * (rateInfo.botCommissionPct / 100));
+      const boltzFeeAmount = Math.ceil(sourceAmount * (rateInfo.boltzFeePct / 100));
+      const raffleContribution = Math.floor(sourceAmount * 0.001);
+
+      fee = {
+        sourceAmount,
+        commissionRate: rateInfo.botCommissionPct,
+        commissionAmount,
+        boltzFeeRate: rateInfo.boltzFeePct,
+        boltzFeeAmount,
+        boltzMinerFee: rateInfo.boltzMinerFee,
+        totalFees: commissionAmount + boltzFeeAmount + rateInfo.boltzMinerFee,
+        netSwapAmount: sourceAmount - commissionAmount - boltzFeeAmount - rateInfo.boltzMinerFee,
+        estimatedReceive: receiveAmount,
+        botProfit: commissionAmount,
+      };
+
+      s.sourceAmount = sourceAmount;
+      s.fee = fee;
+      s.step = 'confirm';
+      setSs(ctx, s);
+
+      const lines = [
+        '📋 *Resumen de tu swap*',
+        '',
+        `Envías: ${sourceAmount.toLocaleString()} sats on-chain`,
+        `Recibes en Lightning: ${receiveAmount.toLocaleString()} sats (tu invoice)`,
+        '',
+        '*Comisiones incluidas:*',
+        `  ├── SwapBot (${rateInfo.botCommissionPct}%): ${commissionAmount.toLocaleString()} sats`,
+        `  ├── Red Boltz (${rateInfo.boltzFeePct}%): ${boltzFeeAmount.toLocaleString()} sats`,
+        `  ├── Minería: ${rateInfo.boltzMinerFee} sats`,
+        `  └── Sorteo (0.1%): ${raffleContribution.toLocaleString()} sats`,
+        '',
+        `⏱ Tiempo estimado: 10-30 minutos`,
+      ];
+
+      await ctx.reply(lines.join('\n'), Markup.inlineKeyboard([
+        [Markup.button.callback('✅ Confirmar', 'swap_confirm'), Markup.button.callback('❌ Cancelar', 'swap_cancel')],
+      ]));
+      return;
+    }
+
+    // Reverse (LN→Chain) or ChangeNOW: amount is source
+    sourceAmount = amount;
+    fee = commissionEngine.calculateFeeBreakdown(sourceAmount, rateInfo);
+    receiveAmount = fee.estimatedReceive;
+
+    s.sourceAmount = sourceAmount;
     s.rateInfo = rateInfo;
-    s.fee = commissionEngine.calculateFeeBreakdown(amount, rateInfo);
+    s.fee = fee;
     s.step = 'confirm';
     setSs(ctx, s);
 
     const sourceLabel = isBTC ? 'sats' : (s.currency || 'USDT');
     const destLabel = isBTC ? 'sats' : 'BTC';
-    const msg = commissionEngine.formatBreakdown(s.fee, sourceLabel, destLabel);
+    const msg = commissionEngine.formatBreakdown(fee, sourceLabel, destLabel);
 
     await ctx.reply(msg, Markup.inlineKeyboard([
       [Markup.button.callback('✅ Confirmar', 'swap_confirm'), Markup.button.callback('❌ Cancelar', 'swap_cancel')],
