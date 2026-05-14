@@ -148,3 +148,137 @@ export function isWalletReady(): boolean {
 export function getWalletAddress(): string {
   return config.btcAddress || '';
 }
+
+// ---- Transaction building & sending ----
+
+interface Utxo {
+  txid: string;
+  vout: number;
+  value: number; // sats
+}
+
+/** Fetch UTXOs for our address from mempool.space */
+async function getUtxos(): Promise<Utxo[]> {
+  const url = `https://mempool.space/api/address/${config.btcAddress}/utxo`;
+  const { data } = await axios.get<Array<{
+    txid: string;
+    vout: number;
+    value: number;
+    status: { confirmed: boolean };
+  }>>(url, { timeout: 10000 });
+
+  return data
+    .filter((u) => u.status.confirmed)
+    .map((u) => ({
+      txid: u.txid,
+      vout: u.vout,
+      value: u.value,
+    }));
+}
+
+/** Get fee rate from mempool.space */
+async function getFeeRate(satsPerVbyte = 5): Promise<number> {
+  try {
+    const { data } = await axios.get<{ fastestFee: number; halfHourFee: number; hourFee: number; economyFee: number }>(
+      'https://mempool.space/api/v1/fees/recommended',
+      { timeout: 5000 },
+    );
+    // Use economy fee unless it's very low
+    return Math.max(data.economyFee || 1, satsPerVbyte);
+  } catch {
+    return satsPerVbyte;
+  }
+}
+
+/**
+ * Build, sign and broadcast a transaction sending BTC from our wallet.
+ * @returns txid of the broadcast transaction, or null on failure.
+ */
+export async function sendToAddress(
+  toAddress: string,
+  amountSats: number,
+): Promise<string | null> {
+  if (!keyPair) {
+    logger.error('Cannot send: wallet not initialized');
+    return null;
+  }
+
+  try {
+    const utxos = await getUtxos();
+    if (utxos.length === 0) {
+      logger.error('No UTXOs available');
+      return null;
+    }
+
+    const feeRate = await getFeeRate();
+    logger.info('Building transaction', { to: toAddress, amount: amountSats, utxos: utxos.length, feeRate });
+
+    const psbt = new bitcoin.Psbt({ network: bitcoin.networks.bitcoin });
+    let totalInput = 0;
+
+    // Select UTXOs until we have enough
+    for (const utxo of utxos) {
+      // Get raw transaction hex for non-witness UTXO
+      const txUrl = `https://mempool.space/api/tx/${utxo.txid}/hex`;
+      const { data: txHex } = await axios.get<string>(txUrl, { timeout: 10000 });
+
+      psbt.addInput({
+        hash: utxo.txid,
+        index: utxo.vout,
+        nonWitnessUtxo: Buffer.from(txHex, 'hex'),
+      });
+
+      totalInput += utxo.value;
+
+      if (totalInput >= amountSats + 1000) break; // +1000 sats buffer for fees
+    }
+
+    if (totalInput < amountSats) {
+      logger.error('Insufficient funds', { totalInput, needed: amountSats });
+      return null;
+    }
+
+    // Add output to destination
+    psbt.addOutput({ address: toAddress, value: BigInt(amountSats) });
+
+    // Estimate fee and add change output
+    const estimatedSize = psbt.inputCount * 68 + 2 * 31 + 10; // ~inputs*68 + outputs*31 + overhead
+    const fee = estimatedSize * feeRate;
+    const change = totalInput - amountSats - fee;
+
+    if (change > 546) {
+      // Dust limit: 546 sats
+      const { address: changeAddress } = bitcoin.payments.p2wpkh({
+        pubkey: Buffer.from(keyPair.publicKey),
+        network: bitcoin.networks.bitcoin,
+      });
+      if (changeAddress) {
+        psbt.addOutput({ address: changeAddress, value: BigInt(change) });
+      }
+    }
+
+    logger.info('Transaction details', { inputs: psbt.inputCount, amount: amountSats, fee, change });
+
+    // Sign all inputs
+    for (let i = 0; i < psbt.inputCount; i++) {
+      psbt.signInput(i, keyPair);
+    }
+
+    psbt.finalizeAllInputs();
+    const tx = psbt.extractTransaction();
+    const txHex = tx.toHex();
+
+    // Broadcast via mempool.space
+    const { data: broadcastResult } = await axios.post<string>(
+      'https://mempool.space/api/tx',
+      txHex,
+      { headers: { 'Content-Type': 'text/plain' }, timeout: 10000 },
+    );
+
+    logger.info('Transaction broadcast', { txid: broadcastResult, amount: amountSats, to: toAddress });
+    return broadcastResult;
+  } catch (error) {
+    logger.error('Failed to send transaction', { error, to: toAddress, amount: amountSats });
+    return null;
+  }
+}

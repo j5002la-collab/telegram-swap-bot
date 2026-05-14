@@ -3,3 +3,8 @@ dist/
 .env
 *.log
 .DS_Store
+*.pem
+*.key
+*_private*
+backup/
+secrets/

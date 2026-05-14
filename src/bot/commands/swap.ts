@@ -9,7 +9,7 @@ import { Swap, SwapDirection, ChainNetwork, User } from '../../models';
 import { boltzClient } from '../../boltz/client';
 import { BoltzWebSocket } from '../../boltz/websocket';
 import { getCNClient } from '../../changenow/client';
-import { getWalletAddress, isWalletReady } from '../../engine/wallet';
+import { getWalletAddress, isWalletReady, sendToAddress } from '../../engine/wallet';
 import type { BoltzSwapStatus } from '../../boltz/types';
 import bolt11 from 'bolt11';
 import crypto from 'crypto';
@@ -897,21 +897,39 @@ async function monitorDepositAndSwap(
 
                 logger.info('Boltz swap created via intermediary', { swapId, boltzId: res.id });
 
-                // Update swap record
-                await Swap.findOneAndUpdate(
-                  { swapId },
-                  { boltzSwapId: res.id, boltzStatus: 'swap.created',
-                    status: 'completed', completedAt: new Date() },
-                ).catch(() => {});
+                // Auto-send BTC from our wallet to Boltz address
+                const sendResult = await sendToAddress(res.address, res.expectedAmount);
 
-                // Notify user: send BTC from our wallet is TODO, for now show Boltz address
-                await botInstance.telegram.editMessageText(chatId, messageId, undefined,
-                  '✅ Depósito recibido: ' + receivedSats.toLocaleString() + ' sats\n\n' +
-                  'Swap creado con Boltz: `' + res.id + '`\n\n' +
-                  'Boltz pagará tu invoice Lightning de ' +
-                  (s.fee?.estimatedReceive?.toLocaleString() || '?') + ' sats.\n\n' +
-                  '📋 _El envío a Boltz desde nuestra wallet es manual por ahora._',
-                );
+                if (sendResult) {
+                  // Update swap record
+                  await Swap.findOneAndUpdate(
+                    { swapId },
+                    { boltzSwapId: res.id, boltzStatus: 'invoice.set',
+                      status: 'pending', completedAt: undefined },
+                  ).catch(() => {});
+
+                  await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+                    '✅ Depósito recibido: ' + receivedSats.toLocaleString() + ' sats\n\n' +
+                    '📤 Enviado a Boltz: `' + sendResult + '`\n\n' +
+                    'Swap creado: `' + res.id + '`\n' +
+                    'Recibirás ' + (s.fee?.estimatedReceive?.toLocaleString() || '?') + ' sats en Lightning.\n\n' +
+                    '⏳ _Esperando que Boltz procese el pago..._',
+                  );
+
+                  // Subscribe to WebSocket for Boltz updates
+                  if (boltzWebSocket) {
+                    boltzWebSocket.subscribe(res.id, (_id, status) => {
+                      updateSwapMessage(chatId, messageId, status, swapId, s, res.id, userId).catch(() => {});
+                    });
+                    setTimeout(() => boltzWebSocket?.unsubscribe(res.id), 30 * 60 * 1000);
+                  }
+                } else {
+                  await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+                    '✅ Depósito recibido: ' + receivedSats.toLocaleString() + ' sats\n\n' +
+                    '⚠️ Error al enviar a Boltz. Swap #' + swapId + '.\n\n' +
+                    'Contacta a soporte con este ID.',
+                  );
+                }
 
                 return;
               }
