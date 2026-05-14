@@ -46,9 +46,9 @@ export function createBot(boltzWs?: BoltzWebSocket): Telegraf<Context> {
   bot.on('text', handleSwapAmount);
   bot.on('text', handleCalcText);
 
-  // Debug: log every message
+  // Message tracer
   bot.use(async (ctx, next) => {
-    console.log('[MSG]', ctx.from?.first_name, ctx.updateType, ctx.message && 'text' in ctx.message ? ctx.message.text?.slice(0, 80) : '');
+    process.stderr.write(new Date().toISOString().slice(11,19) + ' MSG: ' + (ctx.from?.first_name || '?') + ' - ' + ctx.updateType + '\n');
     await next();
   });
 
