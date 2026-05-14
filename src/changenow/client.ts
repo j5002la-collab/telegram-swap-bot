@@ -84,7 +84,7 @@ export class ChangeNowClient {
       baseURL: this.baseUrl,
       timeout: 15000,
       headers: {
-        'x-api-key': apiKey,
+        'x-changenow-api-key': apiKey,
         'Content-Type': 'application/json',
       },
     });
