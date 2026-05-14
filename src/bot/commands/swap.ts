@@ -10,6 +10,7 @@ import { boltzClient } from '../../boltz/client';
 import { BoltzWebSocket } from '../../boltz/websocket';
 import { getCNClient } from '../../changenow/client';
 import { getWalletAddress, isWalletReady, sendToAddress } from '../../engine/wallet';
+import axios from 'axios';
 import type { BoltzSwapStatus } from '../../boltz/types';
 import bolt11 from 'bolt11';
 import crypto from 'crypto';
@@ -871,15 +872,18 @@ async function monitorDepositAndSwap(
 
   try {
     // Poll for deposit
-    const { default: axios } = await import('axios');
     const maxPolls = 180; // 60 min at 20s intervals
     const ourAddress = getWalletAddress();
+    logger.info('Deposit monitor started', { swapId, ourAddress, expected: s.sourceAmount });
 
     for (let i = 0; i < maxPolls; i++) {
       await new Promise((r) => setTimeout(r, 20_000));
 
       try {
         const url = `https://mempool.space/api/address/${ourAddress}/txs`;
+        if (i % 3 === 0) {
+          logger.debug('Deposit polling', { swapId, poll: i + 1, url });
+        }
         const { data } = await axios.get(url, { timeout: 10000 });
 
         // Find a tx sending at least the expected amount to our address
@@ -890,6 +894,7 @@ async function monitorDepositAndSwap(
           for (const vout of tx.vout) {
             if (vout.scriptpubkey_address === ourAddress) {
               const receivedSats = Math.round(vout.value * 100_000_000);
+              logger.debug('Deposit candidate', { txid: tx.txid, vout: i, receivedSats, expectedAmount, confirmed: tx.status.confirmed });
               if (receivedSats >= expectedAmount && tx.status.confirmed) {
                 found = true;
                 logger.info('Deposit confirmed for swap', { swapId, txid: tx.txid, amount: receivedSats });
@@ -953,7 +958,8 @@ async function monitorDepositAndSwap(
         if (i % 3 === 0) {
           logger.debug('Still waiting for intermediary deposit', { swapId, poll: i + 1 });
         }
-      } catch {
+      } catch (err) {
+        logger.warn('Deposit poll error', { swapId, error: String(err), poll: i + 1 });
         // polling error, continue
       }
     }
