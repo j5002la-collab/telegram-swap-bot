@@ -610,6 +610,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
 
         if (useIntermediary) {
           // Intermediary mode: user deposits to OUR wallet, we forward to Boltz
+          logger.debug('Swap: using intermediary mode', { swapId, ourAddress: getWalletAddress() });
           const ourAddress = getWalletAddress();
           await Swap.create({
             swapId, userId: userState?.userId || 'unknown',
@@ -624,7 +625,8 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
             status: 'pending',
           });
 
-          await ctx.editMessageText(
+          await ctx.editMessageText('Intercambio creado! 🎉');
+          const depositMsg = await ctx.reply(
             '🏦 *Deposita a nuestra wallet*\n\n' +
             'Envía **' + s.sourceAmount!.toLocaleString() + ' sats** a:\n\n' +
             '`' + ourAddress + '`\n\n' +
@@ -634,9 +636,11 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
             '⏱ Tiempo estimado: 10-60 minutos',
           );
 
-          // Start background deposit monitoring
-          if (chatId && messageId) {
-            monitorDepositAndSwap(swapId, s, chatId, messageId, userState?.userId).catch((err) => {
+          // Start background deposit monitoring on the new message
+          const dChatId = depositMsg.chat.id;
+          const dMessageId = depositMsg.message_id;
+          if (dChatId && dMessageId) {
+            monitorDepositAndSwap(swapId, s, dChatId, dMessageId, userState?.userId).catch((err) => {
               logger.error('Deposit monitor failed', { error: err, swapId });
             });
           }
