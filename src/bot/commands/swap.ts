@@ -12,6 +12,10 @@ import { getCNClient } from '../../changenow/client';
 import type { BoltzSwapStatus } from '../../boltz/types';
 import bolt11 from 'bolt11';
 import crypto from 'crypto';
+import * as ecc from 'tiny-secp256k1';
+import { ECPairFactory } from 'ecpair';
+
+const ECPair = ECPairFactory(ecc);
 
 // --- Global state ---
 let botInstance: Telegraf<Context> | null = null;
@@ -490,10 +494,10 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
         const t0 = Date.now();
         const preimage = crypto.randomBytes(32);
         preimageHex = preimage.toString('hex');
-        const key = crypto.randomBytes(32).toString('hex');
+        const claimKeys = ECPair.makeRandom();
         const res = await boltzClient.createReverseSwap({
           from: 'BTC', to: 'BTC', invoiceAmount: s.sourceAmount,
-          claimPublicKey: key,
+          claimPublicKey: Buffer.from(claimKeys.publicKey).toString('hex'),
           preimageHash: crypto.createHash('sha256').update(preimage).digest('hex'),
         });
         swapServiceId = res.id;
@@ -523,9 +527,10 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
         if (!s.invoice) { await ctx.editMessageText('Falta la invoice. Usa /swap.'); clearSs(ctx); return; }
         logger.debug('Swap: creating Boltz submarine swap', { invoiceLen: s.invoice.length });
         const t0 = Date.now();
+        const refundKeys = ECPair.makeRandom();
         const res = await boltzClient.createSubmarineSwap({
           from: 'BTC', to: 'BTC', invoice: s.invoice,
-          refundPublicKey: crypto.randomBytes(32).toString('hex'),
+          refundPublicKey: Buffer.from(refundKeys.publicKey).toString('hex'),
         });
         swapServiceId = res.id;
         logger.debug('Swap: Boltz submarine swap created', { boltzId: res.id, ms: Date.now() - t0 });
