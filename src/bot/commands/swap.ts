@@ -1492,8 +1492,10 @@ async function monitorDepositAndSwap(
                 return;
               }
 
-              // Mark txid as seen after checking all vouts (prevents re-evaluation)
-              processedTxids.add(tx.txid);
+              // Only mark CONFIRMED txids as seen — unconfirmed may confirm later
+              if (tx.status.confirmed) {
+                processedTxids.add(tx.txid);
+              }
             }
           }
 
