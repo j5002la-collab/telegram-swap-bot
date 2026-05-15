@@ -154,7 +154,7 @@ export function getWalletAddress(): string {
 interface Utxo {
   txid: string;
   vout: number;
-  value: number; // sats
+  value: number; // sats (converted from BTC at fetch time)
 }
 
 /** Fetch UTXOs for our address from mempool.space */
@@ -172,7 +172,7 @@ async function getUtxos(): Promise<Utxo[]> {
     .map((u) => ({
       txid: u.txid,
       vout: u.vout,
-      value: u.value,
+      value: Math.round(u.value * 100_000_000), // mempool.space returns BTC → convert to sats
     }));
 }
 
@@ -213,24 +213,26 @@ export async function sendToAddress(
     const feeRate = await getFeeRate();
     logger.info('Building transaction', { to: toAddress, amount: amountSats, utxos: utxos.length, feeRate });
 
+    // Derive the script for our own address (needed for witnessUtxo)
+    const ownScript = bitcoin.address.toOutputScript(config.btcAddress, bitcoin.networks.bitcoin);
+
     const psbt = new bitcoin.Psbt({ network: bitcoin.networks.bitcoin });
     let totalInput = 0;
 
     // Select UTXOs until we have enough
     for (const utxo of utxos) {
-      // Get raw transaction hex for non-witness UTXO
-      const txUrl = `https://mempool.space/api/tx/${utxo.txid}/hex`;
-      const { data: txHex } = await axios.get<string>(txUrl, { timeout: 10000 });
-
       psbt.addInput({
         hash: utxo.txid,
         index: utxo.vout,
-        nonWitnessUtxo: Buffer.from(txHex, 'hex'),
+        witnessUtxo: {
+          script: ownScript,
+          value: BigInt(utxo.value),
+        },
       });
 
       totalInput += utxo.value;
 
-      if (totalInput >= amountSats + 1000) break; // +1000 sats buffer for fees
+      if (totalInput >= amountSats + 2000) break; // +2000 sats buffer for fees
     }
 
     if (totalInput < amountSats) {
@@ -242,7 +244,8 @@ export async function sendToAddress(
     psbt.addOutput({ address: toAddress, value: BigInt(amountSats) });
 
     // Estimate fee and add change output
-    const estimatedSize = psbt.inputCount * 68 + 2 * 31 + 10; // ~inputs*68 + outputs*31 + overhead
+    // p2wpkh input: ~68 vB, output: ~31 vB, overhead: ~10 vB
+    const estimatedSize = psbt.inputCount * 68 + (psbt.txOutputs.length + 1) * 31 + 10;
     const fee = estimatedSize * feeRate;
     const change = totalInput - amountSats - fee;
 
