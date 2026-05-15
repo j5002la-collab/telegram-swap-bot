@@ -6,6 +6,7 @@ import { config } from '../utils/config';
 import { logger } from '../utils/logger';
 
 const ECPair = ECPairFactory(ecc);
+bitcoin.initEccLib(ecc); // Required for Taproot (bc1p) address handling
 
 export interface DepositInfo {
   txid: string;
