@@ -27,6 +27,12 @@ async function main(): Promise<void> {
     const walletStatus = initWallet();
     logger.info('Wallet status', walletStatus);
 
+    if (!walletStatus.initialized) {
+      logger.warn('⚠️  WALLET NOT INITIALIZED — intermediary swaps DISABLED');
+      logger.warn('   Set WALLET_BTC_PRIVATE_KEY (WIF format) to enable intermediary mode');
+      logger.warn('   Swaps will use DIRECT mode (user sends to Boltz address)');
+    }
+
     // Validate wallet config and show warnings
     const warnings = validateConfig(config);
     for (const w of warnings) {

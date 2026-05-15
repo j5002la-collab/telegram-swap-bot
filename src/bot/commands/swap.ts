@@ -846,7 +846,9 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
       } else {
         if (!s.invoice) { await ctx.editMessageText('Falta la invoice. Usa /swap.'); clearSs(ctx); return; }
 
-        const useIntermediary = true; // disabled — deposit monitoring needs debugging
+        const walletReady = isWalletReady();
+        const useIntermediary = walletReady;
+        logger.info('Swap: ONCHAIN2LN mode selection', { walletReady, useIntermediary });
 
         if (useIntermediary) {
           // Intermediary mode: user deposits to OUR wallet, we forward to Boltz
@@ -1218,12 +1220,17 @@ async function monitorDepositAndSwap(
   const s = session;
 
   try {
-    // Poll for deposit
     const maxPolls = 180; // 60 min at 20s intervals
     const ourAddress = getWalletAddress();
     const expectedAmount = s.sourceAmount || 0;
     const neededConfs = minConfirmations(expectedAmount);
-    logger.info('Deposit monitor started', { swapId, ourAddress, expected: expectedAmount, minConfirmations: neededConfs });
+    const swapCreatedAt = Date.now(); // track when this swap was created
+    const processedTxids = new Set<string>(); // dedup: never reprocess same txid
+
+    logger.info('Deposit monitor started', {
+      swapId, ourAddress, expected: expectedAmount,
+      minConfirmations: neededConfs, swapCreatedAt: new Date(swapCreatedAt).toISOString(),
+    });
 
     for (let i = 0; i < maxPolls; i++) {
       await new Promise((r) => setTimeout(r, 20_000));
@@ -1231,31 +1238,54 @@ async function monitorDepositAndSwap(
       try {
         const url = `https://mempool.space/api/address/${ourAddress}/txs`;
         if (i % 3 === 0) {
-          logger.debug('Deposit polling', { swapId, poll: i + 1, minConfs: neededConfs });
+          logger.debug('Deposit polling', { swapId, poll: i + 1, minConfs: neededConfs, processedCount: processedTxids.size });
         }
-        const { data } = await axios.get(url, { timeout: 10000 });
+        const { data } = await axios.get<Array<{
+          txid: string;
+          vout: Array<{ scriptpubkey_address: string; value: number }>;
+          status: { confirmed: boolean; block_height?: number; block_time?: number };
+        }>>(url, { timeout: 10000 });
 
         // Get current tip height for confirmation counting
         const tipHeight = await getTipHeight();
 
-        // Find a tx sending at least the expected amount to our address
         for (const tx of data) {
-          for (const vout of tx.vout) {
-            if (vout.scriptpubkey_address === ourAddress) {
-              const receivedSats = Math.round(vout.value * 100_000_000);
-              const txBlockHeight = tx.status.block_height || 0;
-              const confirmations = tx.status.confirmed && txBlockHeight > 0
-                ? tipHeight - txBlockHeight + 1
-                : 0;
+          // --- DEDUP: skip already-processed txids ---
+          if (processedTxids.has(tx.txid)) continue;
 
-              logger.debug('Deposit candidate', {
-                txid: tx.txid, receivedSats, expectedAmount,
-                confirmed: tx.status.confirmed, confirmations, needed: neededConfs,
-              });
+          // --- DEDUP: skip txs confirmed before swap was created (>10 min tolerance) ---
+          const txBlockTime = (tx.status.block_time || 0) * 1000; // Unix timestamp → ms
+          const txAgeMs = swapCreatedAt - txBlockTime;
+          // If tx was confirmed > 10 minutes before swap creation, it's not ours
+          if (tx.status.confirmed && txBlockTime > 0 && txAgeMs > 10 * 60_000) {
+            processedTxids.add(tx.txid); // mark as seen to avoid re-checking
+            logger.debug('Deposit skip: tx too old', {
+              txid: tx.txid, txAgeMin: Math.round(txAgeMs / 60000),
+              txBlockTime: new Date(txBlockTime).toISOString(),
+            });
+            continue;
+          }
+
+          for (let vi = 0; vi < tx.vout.length; vi++) {
+            const vout = tx.vout[vi];
+            if (vout.scriptpubkey_address !== ourAddress) continue;
+
+            const receivedSats = Math.round(vout.value * 100_000_000);
+            const txBlockHeight = tx.status.block_height || 0;
+            const confirmations = tx.status.confirmed && txBlockHeight > 0
+              ? tipHeight - txBlockHeight + 1
+              : 0;
+
+            logger.debug('Deposit candidate', {
+              txid: tx.txid, vout: vi, receivedSats, expectedAmount,
+              confirmed: tx.status.confirmed, confirmations, needed: neededConfs,
+              txAgeMin: Math.round(txAgeMs / 60000),
+            });
 
               if (receivedSats >= expectedAmount && confirmations >= neededConfs) {
+                processedTxids.add(tx.txid); // never re-process
                 logger.info('Deposit fully confirmed for swap', {
-                  swapId, txid: tx.txid, amount: receivedSats, confirmations,
+                  swapId, txid: tx.txid, vout: vi, amount: receivedSats, confirmations,
                 });
 
                 // Deduct commission + raffle
@@ -1264,75 +1294,111 @@ async function monitorDepositAndSwap(
                 await raffleEngine.trackSwapVolume(userId || 'unknown', expectedAmount).catch(() => {});
 
                 // === NOW create the Boltz swap AFTER confirmed deposit ===
-                logger.info('Creating Boltz swap after confirmed deposit', { swapId });
+                logger.info('Creating Boltz swap after confirmed deposit', { swapId, txid: tx.txid });
                 const refundKeys = ECPair.makeRandom();
-                const res = await boltzClient.createSubmarineSwap({
-                  from: 'BTC', to: 'BTC',
-                  invoice: s.invoice!,
-                  refundPublicKey: Buffer.from(refundKeys.publicKey).toString('hex'),
-                });
+                try {
+                  const res = await boltzClient.createSubmarineSwap({
+                    from: 'BTC', to: 'BTC',
+                    invoice: s.invoice!,
+                    refundPublicKey: Buffer.from(refundKeys.publicKey).toString('hex'),
+                  });
 
-                logger.info('Boltz swap created via intermediary', { swapId, boltzId: res.id });
+                  logger.info('Boltz swap created via intermediary', { swapId, boltzId: res.id });
 
-                // Auto-send BTC from our wallet to Boltz address
-                const sendResult = await sendToAddress(res.address, res.expectedAmount);
+                  // Auto-send BTC from our wallet to Boltz address
+                  const sendResult = await sendToAddress(res.address, res.expectedAmount);
 
-                if (sendResult) {
-                  // Update swap record
+                  if (sendResult) {
+                    // === SUCCESS PATH ===
+                    await Swap.findOneAndUpdate(
+                      { swapId },
+                      { boltzSwapId: res.id, boltzStatus: 'invoice.set',
+                        status: 'pending', completedAt: undefined },
+                    ).catch(() => {});
+
+                    const statusMsg =
+                      '✅ Depósito confirmado: ' + receivedSats.toLocaleString() + ' sats\n' +
+                      `(${confirmations} confirmaciones)\n` +
+                      `TX: \`${tx.txid.slice(0, 16)}...\`\n\n` +
+                      '📤 Enviado a Boltz: `' + sendResult + '`\n\n' +
+                      'Swap Boltz: `' + res.id + '`\n' +
+                      'Recibirás ' + (s.fee?.estimatedReceive?.toLocaleString() || '?') + ' sats en Lightning.\n\n' +
+                      '⏳ _Esperando que Boltz procese el pago..._';
+
+                    await botInstance.telegram.editMessageText(chatId, messageId, undefined, statusMsg);
+
+                    // Subscribe to WebSocket for Boltz updates
+                    if (boltzWebSocket) {
+                      boltzWebSocket.subscribe(res.id, (_id, status) => {
+                        updateSwapMessage(chatId, messageId, status, swapId, s, res.id, userId).catch(() => {});
+                      });
+                      setTimeout(() => boltzWebSocket?.unsubscribe(res.id), 30 * 60 * 1000);
+                    }
+
+                    // === Fallback polling: verify Boltz completed the swap ===
+                    startBoltzFallbackPoll(swapId, res.id, chatId, messageId, s, userId).catch((err) => {
+                      logger.error('Boltz fallback poll failed', { error: err, swapId, boltzId: res.id });
+                    });
+                  } else {
+                    // === SEND FAILURE: mark as failed in DB + notify admin ===
+                    await Swap.findOneAndUpdate(
+                      { swapId },
+                      { boltzSwapId: res.id, boltzStatus: 'send_failed',
+                        status: 'failed', completedAt: undefined },
+                    ).catch(() => {});
+
+                    const failMsg =
+                      '✅ Depósito recibido: ' + receivedSats.toLocaleString() + ' sats\n\n' +
+                      '⚠️ *ERROR al enviar a Boltz.*\n\n' +
+                      'Swap #' + swapId + ' | Boltz: `' + res.id + '`\n\n' +
+                      'Contacta a soporte con este ID.';
+
+                    await botInstance.telegram.editMessageText(chatId, messageId, undefined, failMsg);
+
+                    await notifyAdmins(
+                      '❌ *FALLO CRÍTICO: No se pudo enviar a Boltz*\n\n' +
+                      `Swap: \`${swapId}\`\n` +
+                      `Boltz ID: \`${res.id}\`\n` +
+                      `TX depósito: \`${tx.txid}\`\n` +
+                      `Depósito: ${receivedSats.toLocaleString()} sats\n` +
+                      `Usuario: \`${userId || 'N/A'}\`\n` +
+                      `Boltz address: \`${res.address}\`\n` +
+                      `Expected: ${res.expectedAmount.toLocaleString()} sats`,
+                    );
+                  }
+                } catch (boltzError: any) {
+                  // === BOLTZ CREATE FAILURE ===
+                  logger.error('Boltz swap creation failed after deposit', { error: boltzError, swapId, txid: tx.txid });
+
                   await Swap.findOneAndUpdate(
                     { swapId },
-                    { boltzSwapId: res.id, boltzStatus: 'invoice.set',
-                      status: 'pending', completedAt: undefined },
+                    { boltzStatus: 'boltz_create_failed', status: 'failed' },
                   ).catch(() => {});
 
-                  const statusMsg =
-                    '✅ Depósito confirmado: ' + receivedSats.toLocaleString() + ' sats\n' +
-                    `(${confirmations} confirmaciones)\n\n` +
-                    '📤 Enviado a Boltz: `' + sendResult + '`\n\n' +
-                    'Swap creado: `' + res.id + '`\n' +
-                    'Recibirás ' + (s.fee?.estimatedReceive?.toLocaleString() || '?') + ' sats en Lightning.\n\n' +
-                    '⏳ _Esperando que Boltz procese el pago..._';
-
-                  await botInstance.telegram.editMessageText(chatId, messageId, undefined, statusMsg);
-
-                  // Subscribe to WebSocket for Boltz updates
-                  if (boltzWebSocket) {
-                    boltzWebSocket.subscribe(res.id, (_id, status) => {
-                      updateSwapMessage(chatId, messageId, status, swapId, s, res.id, userId).catch(() => {});
-                    });
-                    setTimeout(() => boltzWebSocket?.unsubscribe(res.id), 30 * 60 * 1000);
-                  }
-
-                  // === Fallback polling: verify Boltz completed the swap ===
-                  startBoltzFallbackPoll(swapId, res.id, chatId, messageId, s, userId).catch((err) => {
-                    logger.error('Boltz fallback poll failed', { error: err, swapId, boltzId: res.id });
-                  });
-                } else {
-                  // === CRITICAL: send failure — notify admin ===
-                  const failMsg =
+                  await botInstance.telegram.editMessageText(chatId, messageId, undefined,
                     '✅ Depósito recibido: ' + receivedSats.toLocaleString() + ' sats\n\n' +
-                    '⚠️ *ERROR al enviar a Boltz.*\n\n' +
-                    'Swap #' + swapId + ' | Boltz: `' + res.id + '`\n\n' +
-                    'Contacta a soporte con este ID.';
-
-                  await botInstance.telegram.editMessageText(chatId, messageId, undefined, failMsg);
+                    '⚠️ Error al crear swap con Boltz.\n\n' +
+                    'Swap #' + swapId + '\n' +
+                    'Contacta a soporte con este ID.',
+                  ).catch(() => {});
 
                   await notifyAdmins(
-                    '❌ *FALLO CRÍTICO: No se pudo enviar a Boltz*\n\n' +
+                    '❌ *FALLO: No se pudo crear swap Boltz después del depósito*\n\n' +
                     `Swap: \`${swapId}\`\n` +
-                    `Boltz ID: \`${res.id}\`\n` +
+                    `TX depósito: \`${tx.txid}\`\n` +
                     `Depósito: ${receivedSats.toLocaleString()} sats\n` +
                     `Usuario: \`${userId || 'N/A'}\`\n` +
-                    `Boltz address: \`${res.address}\`\n` +
-                    `Expected: ${res.expectedAmount.toLocaleString()} sats`,
+                    `Error: ${boltzError?.message || String(boltzError)}`,
                   );
                 }
 
                 return;
               }
+
+              // Mark txid as seen after checking all vouts (prevents re-evaluation)
+              processedTxids.add(tx.txid);
             }
           }
-        }
 
         if (i % 3 === 0) {
           logger.debug('Still waiting for intermediary deposit', { swapId, poll: i + 1 });
