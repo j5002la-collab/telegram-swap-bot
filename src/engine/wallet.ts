@@ -247,6 +247,7 @@ export async function sendToAddress(
     }
 
     // Add output to destination
+    logger.debug('sendToAddress: adding output', { to: toAddress, amount: amountSats });
     psbt.addOutput({ address: toAddress, value: BigInt(amountSats) });
 
     // Estimate fee and add change output
@@ -269,15 +270,18 @@ export async function sendToAddress(
     logger.info('Transaction details', { inputs: psbt.inputCount, amount: amountSats, fee, change });
 
     // Sign all inputs
+    logger.debug('sendToAddress: signing inputs', { count: psbt.inputCount });
     for (let i = 0; i < psbt.inputCount; i++) {
       psbt.signInput(i, keyPair);
     }
 
+    logger.debug('sendToAddress: finalizing');
     psbt.finalizeAllInputs();
     const tx = psbt.extractTransaction();
     const txHex = tx.toHex();
 
     // Broadcast via mempool.space
+    logger.debug('sendToAddress: broadcasting', { hexLen: txHex.length });
     const { data: broadcastResult } = await axios.post<string>(
       'https://mempool.space/api/tx',
       txHex,
@@ -286,8 +290,9 @@ export async function sendToAddress(
 
     logger.info('Transaction broadcast', { txid: broadcastResult, amount: amountSats, to: toAddress });
     return broadcastResult;
-  } catch (error) {
-    logger.error('Failed to send transaction', { error, to: toAddress, amount: amountSats });
+  } catch (error: any) {
+    const detail = error?.message || error?.response?.data || String(error);
+    logger.error('Failed to send transaction', { error: detail, to: toAddress, amount: amountSats });
     return null;
   }
 }
