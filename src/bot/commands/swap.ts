@@ -941,7 +941,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
             '🏦 *Deposita a nuestra wallet*\n\n' +
             'Envía **' + s.sourceAmount!.toLocaleString() + ' sats** a:\n\n' +
             '`' + ourAddress + '`\n\n' +
-            'Al confirmarse el depósito, crearemos el swap con Boltz\n' +
+            'Al confirmarse el depósito, crearemos el swap\n' +
             'y pagaremos tu invoice Lightning de ' +
             (s.fee?.estimatedReceive?.toLocaleString() || '?') + ' sats.\n\n' +
             '⏱ Tiempo estimado: 10-60 minutos',
@@ -1391,10 +1391,10 @@ async function monitorDepositAndSwap(
                       '✅ Depósito confirmado: ' + receivedSats.toLocaleString() + ' sats\n' +
                       `(${confirmations} confirmaciones)\n` +
                       `TX: \`${tx.txid.slice(0, 16)}...\`\n\n` +
-                      '📤 Enviado a Boltz: `' + sendResult + '`\n\n' +
-                      'Swap Boltz: `' + res.id + '`\n' +
+                      '📤 Enviado: `' + sendResult + '`\n\n' +
+                      'Swap: `' + res.id + '`\n' +
                       'Recibirás ' + (s.fee?.estimatedReceive?.toLocaleString() || '?') + ' sats en Lightning.\n\n' +
-                      '⏳ _Esperando que Boltz procese el pago..._';
+                      '⏳ _Esperando confirmación del pago..._';
 
                     await botInstance.telegram.editMessageText(chatId, messageId, undefined, statusMsg);
 
@@ -1420,8 +1420,8 @@ async function monitorDepositAndSwap(
 
                     const failMsg =
                       '✅ Depósito recibido: ' + receivedSats.toLocaleString() + ' sats\n\n' +
-                      '⚠️ *ERROR al enviar a Boltz.*\n\n' +
-                      'Swap #' + swapId + ' | Boltz: `' + res.id + '`\n\n' +
+                      '⚠️ *ERROR al procesar el swap.*\n\n' +
+                      'Swap #' + swapId + '\n\n' +
                       'Contacta a soporte con este ID.';
 
                     await botInstance.telegram.editMessageText(chatId, messageId, undefined, failMsg);
@@ -1448,7 +1448,7 @@ async function monitorDepositAndSwap(
 
                   await botInstance.telegram.editMessageText(chatId, messageId, undefined,
                     '✅ Depósito recibido: ' + receivedSats.toLocaleString() + ' sats\n\n' +
-                    '⚠️ Error al crear swap con Boltz.\n\n' +
+                    '⚠️ Error al crear el swap.\n\n' +
                     'Swap #' + swapId + '\n' +
                     'Contacta a soporte con este ID.',
                   ).catch(() => {});
@@ -1771,7 +1771,7 @@ async function updateSwapMessage(
     'swap.created': '⏳ Swap creado. Esperando tu transacción...',
     'invoice.set': '📋 Invoice validada. Envía tus BTC a la dirección indicada.',
     'transaction.mempool': '🔍 Transacción detectada en la red (mempool). Esperando confirmación...',
-    'transaction.confirmed': '✅ Transacción confirmada. Boltz está pagando tu invoice Lightning...',
+    'transaction.confirmed': '✅ Transacción confirmada. Pagando tu invoice Lightning...',
     'invoice.pending': '⚡ Pagando invoice Lightning...',
     'invoice.paid': '💰 Invoice pagada. Completando swap...',
     'transaction.claim.pending': '🔐 Finalizando swap...',
