@@ -112,6 +112,22 @@ export class BoltzClient {
     return data;
   }
 
+  /** Get swap status by ID (used for fallback polling) */
+  async getSwapStatus(swapId: string): Promise<string> {
+    try {
+      const { data } = await this.http.get<{ status: string }>(`/swap/submarine/${swapId}`);
+      return data.status;
+    } catch {
+      // Try reverse swap endpoint
+      try {
+        const { data } = await this.http.get<{ status: string }>(`/swap/reverse/${swapId}`);
+        return data.status;
+      } catch {
+        return 'unknown';
+      }
+    }
+  }
+
   async sendSubmarineSwapClaimSignature(swapId: string, params: { pubNonce: string; partialSignature: string }) {
     const { data } = await this.http.post(`/swap/submarine/${swapId}/claim`, params);
     return data;

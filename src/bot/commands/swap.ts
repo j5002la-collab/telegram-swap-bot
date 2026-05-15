@@ -5,6 +5,7 @@ import { raffleEngine } from '../../engine/raffle';
 import { treasuryEngine } from '../../engine/treasury';
 import { getUserState } from '../middleware/user';
 import { logger } from '../../utils/logger';
+import { config } from '../../utils/config';
 import { Swap, SwapDirection, ChainNetwork, User } from '../../models';
 import { boltzClient } from '../../boltz/client';
 import { BoltzWebSocket } from '../../boltz/websocket';
@@ -22,6 +23,39 @@ const ECPair = ECPairFactory(ecc);
 // --- Global state ---
 let botInstance: Telegraf<Context> | null = null;
 let boltzWebSocket: BoltzWebSocket | null = null;
+
+/** Minimum confirmations before creating Boltz swap:
+ *  - <= 1M sats: 1 confirmation
+ *  - 1M - 10M sats: 2 confirmations
+ *  - > 10M sats: 3 confirmations */
+function minConfirmations(amountSats: number): number {
+  if (amountSats <= 1_000_000) return 1;
+  if (amountSats <= 10_000_000) return 2;
+  return 3;
+}
+
+/** Notify all configured admin IDs via Telegram */
+async function notifyAdmins(message: string): Promise<void> {
+  if (!botInstance || config.adminIds.length === 0) return;
+  logger.warn('Notifying admins', { count: config.adminIds.length });
+  for (const adminId of config.adminIds) {
+    try {
+      await botInstance.telegram.sendMessage(adminId, '🚨 *SwapBot Alert*\n\n' + message, { parse_mode: 'Markdown' });
+    } catch (err) {
+      logger.error('Failed to notify admin', { adminId, error: String(err) });
+    }
+  }
+}
+
+/** Fetch the current Bitcoin block height from mempool.space */
+async function getTipHeight(): Promise<number> {
+  try {
+    const { data } = await axios.get('https://mempool.space/api/blocks/tip/height', { timeout: 5000 });
+    return Number(data);
+  } catch {
+    return 0;
+  }
+}
 
 export function setSwapState(state: { bot?: Telegraf<Context>; ws?: BoltzWebSocket }): void {
   if (state.bot) botInstance = state.bot;
@@ -95,6 +129,8 @@ export async function swapCommand(ctx: Context): Promise<void> {
   if (hasCN) {
     buttons.push([Markup.button.callback('USDT -> BTC', 'swap_cur_USDT')]);
     buttons.push([Markup.button.callback('USDC -> BTC', 'swap_cur_USDC')]);
+    buttons.push([Markup.button.callback('BTC -> USDT', 'swap_cur_BTC2USDT')]);
+    buttons.push([Markup.button.callback('BTC -> USDC', 'swap_cur_BTC2USDC')]);
   } else {
     buttons.push([Markup.button.callback('USDT -> BTC (sin API key)', 'swap_cur_disabled')]);
     buttons.push([Markup.button.callback('USDC -> BTC (sin API key)', 'swap_cur_disabled')]);
@@ -111,20 +147,32 @@ export async function handleSwapCurrency(ctx: Context): Promise<void> {
   if (data === 'swap_cancel') { clearSs(ctx); await ctx.editMessageText('Cancelado.'); return; }
   if (data === 'swap_cur_disabled') { await ctx.answerCbQuery('Se necesita configurar API key'); return; }
 
-  const currency = data.replace('swap_cur_', '') as 'BTC' | 'USDT' | 'USDC';
+  const rawCurrency = data.replace('swap_cur_', '');
   const s = ss(ctx) || { step: 'currency' as const };
+
+  // BTC → USDT / BTC → USDC (ChangeNOW reverse stablecoin swaps)
+  if (rawCurrency === 'BTC2USDT' || rawCurrency === 'BTC2USDC') {
+    const destCurrency = rawCurrency === 'BTC2USDT' ? 'USDT' : 'USDC';
+    s.currency = 'BTC';
+    s.destChain = destCurrency === 'USDT' ? 'TRC-20' : 'SOLANA'; // default, will be overridden
+    s.step = 'direction';
+    s.direction = rawCurrency === 'BTC2USDT' ? 'BTC2USDT' : 'BTC2USDC';
+    setSs(ctx, s);
+    await showBTCStableNetworkMenu(ctx, destCurrency);
+    return;
+  }
+
+  const currency = rawCurrency as 'BTC' | 'USDT' | 'USDC';
   s.currency = currency;
 
   if (currency === 'BTC') {
     s.step = 'direction';
     s.sourceChain = 'BTC';
     setSs(ctx, s);
-    logger.debug('Swap: BTC selected → direction menu', { userId: ctx.from?.id });
     await showDirectionMenu(ctx);
   } else {
     s.step = 'network';
     setSs(ctx, s);
-    logger.debug('Swap: stablecoin selected → network menu', { currency, userId: ctx.from?.id });
     await showNetworkMenu(ctx, currency);
   }
 }
@@ -172,6 +220,61 @@ export async function handleSwapNetwork(ctx: Context): Promise<void> {
 }
 
 // ============================================================
+// BTC → USDC / USDT: destination network selection
+// ============================================================
+async function showBTCStableNetworkMenu(ctx: Context, destCurrency: string): Promise<void> {
+  const allNets = destCurrency === 'USDT'
+    ? [
+        { label: 'TRC-20 (Tron)', net: 'TRC-20' as ChainNetwork, fee: '~$0.10' },
+        { label: 'BEP-20 (BSC)', net: 'BEP-20' as ChainNetwork, fee: '~$0.05' },
+        { label: 'Solana', net: 'SOLANA' as ChainNetwork, fee: '~$0.01' },
+        { label: 'Polygon', net: 'POLYGON' as ChainNetwork, fee: '~$0.02' },
+        { label: 'Arbitrum', net: 'ARBITRUM' as ChainNetwork, fee: '~$0.01' },
+        { label: 'ERC-20 (Ethereum)', net: 'ERC-20' as ChainNetwork, fee: '~$2-5' },
+        { label: 'Optimism', net: 'OPTIMISM' as ChainNetwork, fee: '~$0.02' },
+        { label: 'Avalanche', net: 'AVALANCHE' as ChainNetwork, fee: '~$0.03' },
+        { label: 'Base', net: 'BASE' as ChainNetwork, fee: '~$0.01' },
+      ]
+    : [
+        { label: 'Solana', net: 'SOLANA' as ChainNetwork, fee: '~$0.01' },
+        { label: 'Arbitrum', net: 'ARBITRUM' as ChainNetwork, fee: '~$0.01' },
+        { label: 'Base', net: 'BASE' as ChainNetwork, fee: '~$0.01' },
+        { label: 'Polygon', net: 'POLYGON' as ChainNetwork, fee: '~$0.02' },
+        { label: 'ERC-20 (Ethereum)', net: 'ERC-20' as ChainNetwork, fee: '~$2-5' },
+        { label: 'Optimism', net: 'OPTIMISM' as ChainNetwork, fee: '~$0.02' },
+        { label: 'Avalanche', net: 'AVALANCHE' as ChainNetwork, fee: '~$0.03' },
+      ];
+
+  const buttons = allNets.map(n =>
+    [Markup.button.callback(n.label + ' - ' + n.fee, 'swap_destnet_' + n.net)],
+  );
+  buttons.push([Markup.button.callback('Cancelar', 'swap_cancel')]);
+  await ctx.editMessageText(
+    'BTC → ' + destCurrency + ' — Selecciona la red de destino:',
+    Markup.inlineKeyboard(buttons),
+  );
+}
+
+export async function handleSwapDestNetwork(ctx: Context): Promise<void> {
+  if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
+  await ctx.answerCbQuery();
+  const data = ctx.callbackQuery.data;
+  logger.debug('Swap: dest network selected', { data, userId: ctx.from?.id });
+  if (data === 'swap_cancel') { clearSs(ctx); await ctx.editMessageText('Cancelado.'); return; }
+  const s = ss(ctx); if (!s) return;
+  s.destChain = data.replace('swap_destnet_', '') as ChainNetwork;
+  s.step = 'address';
+  setSs(ctx, s);
+  const destCur = s.direction === 'BTC2USDT' ? 'USDT' : 'USDC';
+  logger.debug('Swap: BTC→stablecoin dest net → address', { destChain: s.destChain, destCurrency: destCur, userId: ctx.from?.id });
+  await ctx.editMessageText(
+    'BTC → ' + destCur + ' (' + s.destChain + ')\n\n' +
+    'Pega tu dirección de ' + destCur + ' donde recibirás los fondos.',
+    Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
+  );
+}
+
+// ============================================================
 // Step 2: Direction
 // ============================================================
 async function showDirectionMenu(ctx: Context): Promise<void> {
@@ -179,6 +282,23 @@ async function showDirectionMenu(ctx: Context): Promise<void> {
   const isBTC = !s || s.currency === 'BTC';
 
   if (isBTC) {
+    // Check if this is BTC → stablecoin (handled by ChangeNOW)
+    if (s?.direction === 'BTC2USDT' || s?.direction === 'BTC2USDC') {
+      // BTC → stablecoin: skip direction, go to amount
+      s.step = 'amount';
+      setSs(ctx, s);
+      const destCur = s.direction === 'BTC2USDT' ? 'USDT' : 'USDC';
+      const destNet = s.destChain || 'TRC-20';
+      await ctx.editMessageText(
+        'BTC → ' + destCur + ' (' + destNet + ')\n\n' +
+        'Ingresa cuántos sats quieres enviar:\n' +
+        'Min: 50,000 sats\n\n' +
+        'Responde con el número.',
+        Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
+      );
+      return;
+    }
+
     await ctx.editMessageText('Que tipo de intercambio quieres hacer?', Markup.inlineKeyboard([
       [Markup.button.callback('Enviar BTC On-chain -> Recibir en Lightning', 'swap_dir_ONCHAIN2LN')],
       [Markup.button.callback('Enviar por Lightning -> Recibir BTC On-chain', 'swap_dir_LN2ONCHAIN')],
@@ -292,12 +412,29 @@ export async function handleSwapInvoice(ctx: Context, next: () => Promise<void>)
 export async function handleSwapAddress(ctx: Context, next: () => Promise<void>): Promise<void> {
   if (!ctx.message || !('text' in ctx.message)) return next();
   const s = ss(ctx);
-  logger.debug('📥 handleSwapAddress fired', { step: s?.step, userId: ctx.from?.id });
+  logger.debug('📥 handleSwapAddress fired', { step: s?.step, direction: s?.direction, userId: ctx.from?.id });
   if (!s || s.step !== 'address') return next(); // ← let next handler try
 
   const raw = ctx.message.text.trim();
   if (!raw || raw.length < 10) {
-    await ctx.reply('Dirección muy corta. Pega tu invoice Lightning (lnbc...) o dirección BTC (bc1...).');
+    await ctx.reply('Dirección muy corta. Pega tu invoice Lightning (lnbc...) o dirección.');
+    return;
+  }
+
+  // BTC → stablecoin: address is USDT/USDC destination
+  if (s.direction === 'BTC2USDT' || s.direction === 'BTC2USDC') {
+    s.destAddress = raw;
+    s.step = 'amount';
+    const destCur = s.direction === 'BTC2USDT' ? 'USDT' : 'USDC';
+    setSs(ctx, s);
+    logger.info('BTC→stablecoin address saved', { addr: raw.slice(0, 20) + '...', destCur, destNet: s.destChain });
+    await ctx.reply(
+      'Dirección ' + destCur + ' (' + (s.destChain || '') + ') guardada.\n\n' +
+      'Ahora ingresa cuántos sats quieres ENVIAR:\n' +
+      'Ejemplo: 100000 (100,000 sats)\n\n' +
+      'Responde con el número.',
+      Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
+    );
     return;
   }
 
@@ -377,6 +514,12 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
   if (!s) return;
 
   logger.debug('Swap: processing amount', { amount, currency: s.currency, direction: s.direction, userId: ctx.from?.id });
+
+  // --- BTC → USDC / USDT via ChangeNOW ---
+  if (s.direction === 'BTC2USDT' || s.direction === 'BTC2USDC') {
+    await processBTCStableAmount(ctx, amount);
+    return;
+  }
 
   try {
     // --- Fetch real rates depending on currency ---
@@ -539,6 +682,101 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
 }
 
 // ============================================================
+// BTC → USDC / USDT amount processing (ChangeNOW)
+// ============================================================
+async function processBTCStableAmount(ctx: Context, amount: number): Promise<void> {
+  const s = ss(ctx);
+  if (!s) return;
+
+  const cnClient = getCNClient();
+  if (!cnClient) {
+    await ctx.reply('Cambios BTC→stablecoin no configurados (falta API key).');
+    return;
+  }
+
+  const destCurrency = s.direction === 'BTC2USDT' ? 'USDT' : 'USDC';
+  const destNet = s.destChain || 'TRC-20';
+
+  // Validate min/max (BTC: 50k-25M sats)
+  if (amount < 50000) {
+    await ctx.reply('Monto muy bajo. Mínimo 50,000 sats.');
+    return;
+  }
+  if (amount > 25_000_000) {
+    await ctx.reply('Monto muy alto. Máximo 25,000,000 sats.');
+    return;
+  }
+
+  try {
+    // Get ChangeNOW ticker for destination
+    const destAsset = cnClient.getTicker(destCurrency as 'USDT' | 'USDC', destNet);
+    if (!destAsset) {
+      await ctx.reply('Red de destino no soportada para ' + destCurrency + '.');
+      return;
+    }
+
+    const btcAsset = cnClient.getBTCDest(); // BTC as source
+    const btcAmount = (amount / 100_000_000).toFixed(8); // sats → BTC
+
+    logger.debug('BTC→stablecoin: fetching estimate', {
+      from: 'btc:btc', to: `${destAsset.ticker}:${destAsset.network}`, btcAmount,
+    });
+
+    const estimate = await cnClient.estimate(
+      btcAsset.ticker, destAsset.ticker, btcAmount,
+      btcAsset.network, destAsset.network,
+    );
+
+    const receiveAmount = parseFloat(estimate.toAmount || estimate.estimatedAmount || '0');
+    const commissionAmount = Math.floor(amount * (commissionEngine.getCommissionRate() / 100));
+
+    logger.info('BTC→stablecoin estimate', {
+      sendSats: amount, receiveEst: receiveAmount, destCurrency, destNet,
+      rateId: estimate.rateId,
+    });
+
+    const rateInfo: RateInfo = {
+      boltzRate: receiveAmount / parseFloat(btcAmount),
+      userRate: receiveAmount / parseFloat(btcAmount),
+      boltzFeePct: 0.5,
+      boltzMinerFee: 0,
+      botCommissionPct: commissionEngine.getCommissionRate(),
+      botCommissionAmount: 0,
+      minAmount: 50000,
+      maxAmount: 25000000,
+      pairHash: estimate.rateId,
+    };
+
+    const fee = commissionEngine.calculateFeeBreakdown(amount, rateInfo);
+    fee.estimatedReceive = Math.floor(receiveAmount * 100); // store as cents
+
+    s.sourceAmount = amount;
+    s.rateInfo = rateInfo;
+    s.fee = fee;
+    s.step = 'confirm';
+    setSs(ctx, s);
+
+    const lines = [
+      '📋 *Resumen de tu swap*',
+      '',
+      `Envías: ${amount.toLocaleString()} sats (BTC)`,
+      `Recibes: ~${receiveAmount.toFixed(6)} ${destCurrency} (${destNet})`,
+      '',
+      `Comisión SwapBot (${commissionEngine.getCommissionRate()}%): ${commissionAmount.toLocaleString()} sats`,
+      '',
+      '⏱ Tiempo estimado: 5-30 minutos',
+    ];
+
+    await ctx.reply(lines.join('\n'), Markup.inlineKeyboard([
+      [Markup.button.callback('✅ Confirmar', 'swap_confirm'), Markup.button.callback('❌ Cancelar', 'swap_cancel')],
+    ]));
+  } catch (error) {
+    logger.error('BTC→stablecoin estimate error', { error });
+    await ctx.reply('Error al obtener cotización. Intenta de nuevo con /swap.');
+  }
+}
+
+// ============================================================
 // Step 5: Confirm → Execute
 // ============================================================
 export async function handleSwapConfirm(ctx: Context): Promise<void> {
@@ -560,6 +798,12 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
 
   // === BTC ROUTE ===
   if (s.currency === 'BTC') {
+    // --- BTC → USDC / USDT via ChangeNOW ---
+    if (s.direction === 'BTC2USDT' || s.direction === 'BTC2USDC') {
+      await executeBTCStableSwap(ctx, swapId, s, userState?.userId, chatId, messageId);
+      return;
+    }
+
     try {
       const isReverse = s.direction === 'LN2ONCHAIN';
       let swapServiceId: string;
@@ -862,6 +1106,109 @@ async function startCNPolling(
 }
 
 // ============================================================
+// BTC → USDC / USDT swap execution (ChangeNOW)
+// ============================================================
+async function executeBTCStableSwap(
+  ctx: Context, swapId: string, s: SwapSession,
+  userId?: string, chatId?: number, messageId?: number,
+): Promise<void> {
+  const cnClient = getCNClient();
+  if (!cnClient) {
+    await ctx.editMessageText('Cambios BTC→stablecoin no configurados.');
+    clearSs(ctx); return;
+  }
+
+  const destCurrency = s.direction === 'BTC2USDT' ? 'USDT' : 'USDC';
+  const destNet = s.destChain || 'TRC-20';
+
+  try {
+    const destAsset = cnClient.getTicker(destCurrency as 'USDT' | 'USDC', destNet);
+    if (!destAsset) { await ctx.editMessageText('Red de destino no soportada.'); clearSs(ctx); return; }
+
+    const btcAsset = cnClient.getBTCDest();
+    const fromAmount = (s.sourceAmount! / 100_000_000).toFixed(8); // sats → BTC
+
+    logger.info('BTC→stablecoin: creating ChangeNOW exchange', {
+      from: 'btc', to: `${destAsset.ticker}:${destAsset.network}`, fromAmount,
+      destAddress: s.destAddress?.slice(0, 20) + '...',
+    });
+
+    const estimate = await cnClient.estimate(
+      btcAsset.ticker, destAsset.ticker, fromAmount,
+      btcAsset.network, destAsset.network,
+    );
+
+    const exchange = await cnClient.createExchange({
+      fromCurrency: btcAsset.ticker, toCurrency: destAsset.ticker,
+      fromNetwork: btcAsset.network, toNetwork: destAsset.network,
+      fromAmount,
+      toAmount: (estimate.toAmount || estimate.estimatedAmount || '0'),
+      address: s.destAddress || 'required',
+      flow: 'fixed-rate', rateId: estimate.rateId,
+    });
+
+    // Persist swap record
+    const receivedCents = Math.floor(parseFloat(estimate.toAmount || estimate.estimatedAmount || '0') * 100);
+    try {
+      await Swap.create({
+        swapId, userId: userId || 'unknown',
+        direction: s.direction,
+        sourceChain: 'BTC', destChain: s.destChain,
+        sourceAmount: s.sourceAmount || 0,
+        destAmount: receivedCents,
+        sourceCurrency: 'BTC', destCurrency,
+        boltzSwapId: exchange.id, boltzStatus: 'waiting',
+        commissionRate: s.fee?.commissionRate || commissionEngine.getCommissionRate(),
+        commissionAmount: s.fee?.commissionAmount || 0,
+        botProfit: s.fee?.botProfit || 0,
+        status: 'pending',
+      });
+    } catch (dbError) {
+      logger.error('Failed to persist BTC→stablecoin swap', { error: dbError, swapId });
+    }
+
+    // Track earnings and raffle
+    if (s.fee) {
+      raffleEngine.trackSwapVolume(userId || 'unknown', s.sourceAmount!).catch(() => {});
+      treasuryEngine.trackEarnings(s.fee.commissionAmount).catch(() => {});
+    }
+
+    clearSs(ctx);
+
+    const lines = [
+      '⏳ *Intercambio creado!*',
+      '',
+      `Swap ID: \`${swapId}\``,
+      `Envía: **${fromAmount} BTC** a: `,
+      '`' + exchange.payinAddress + '`',
+      '',
+      `Recibirás: ~${estimate.toAmount || estimate.estimatedAmount || '0'} ${destCurrency} (${destNet})`,
+      '',
+      '⏱ Tiempo estimado: 5-30 min',
+    ];
+
+    await ctx.editMessageText(lines.join('\n'));
+
+    // Start polling for status updates
+    if (chatId && messageId) {
+      startCNPolling(exchange.id, swapId, chatId, messageId).catch((err) => {
+        logger.error('CN polling failed for BTC→stablecoin', { error: err, cnId: exchange.id });
+      });
+    }
+  } catch (error: any) {
+    const status = error?.response?.status;
+    const errMsg = status === 401
+      ? '\n\n🔑 Error de API key.'
+      : status === 404
+      ? '\n\n🔍 Par de intercambio no disponible.'
+      : '';
+    logger.error('BTC→stablecoin swap failed', { error, swapId, status });
+    await ctx.editMessageText('No se pudo crear el intercambio.' + errMsg + '\n\nIntenta de nuevo con /swap.');
+    clearSs(ctx);
+  }
+}
+
+// ============================================================
 // Intermediary deposit → swap flow
 // ============================================================
 async function monitorDepositAndSwap(
@@ -874,7 +1221,9 @@ async function monitorDepositAndSwap(
     // Poll for deposit
     const maxPolls = 180; // 60 min at 20s intervals
     const ourAddress = getWalletAddress();
-    logger.info('Deposit monitor started', { swapId, ourAddress, expected: s.sourceAmount });
+    const expectedAmount = s.sourceAmount || 0;
+    const neededConfs = minConfirmations(expectedAmount);
+    logger.info('Deposit monitor started', { swapId, ourAddress, expected: expectedAmount, minConfirmations: neededConfs });
 
     for (let i = 0; i < maxPolls; i++) {
       await new Promise((r) => setTimeout(r, 20_000));
@@ -882,30 +1231,40 @@ async function monitorDepositAndSwap(
       try {
         const url = `https://mempool.space/api/address/${ourAddress}/txs`;
         if (i % 3 === 0) {
-          logger.debug('Deposit polling', { swapId, poll: i + 1, url });
+          logger.debug('Deposit polling', { swapId, poll: i + 1, minConfs: neededConfs });
         }
         const { data } = await axios.get(url, { timeout: 10000 });
 
-        // Find a tx sending at least the expected amount to our address
-        const expectedAmount = s.sourceAmount || 0;
-        let found = false;
+        // Get current tip height for confirmation counting
+        const tipHeight = await getTipHeight();
 
+        // Find a tx sending at least the expected amount to our address
         for (const tx of data) {
           for (const vout of tx.vout) {
             if (vout.scriptpubkey_address === ourAddress) {
               const receivedSats = Math.round(vout.value * 100_000_000);
-              logger.debug('Deposit candidate', { txid: tx.txid, vout: i, receivedSats, expectedAmount, confirmed: tx.status.confirmed });
-              if (receivedSats >= expectedAmount && tx.status.confirmed) {
-                found = true;
-                logger.info('Deposit confirmed for swap', { swapId, txid: tx.txid, amount: receivedSats });
+              const txBlockHeight = tx.status.block_height || 0;
+              const confirmations = tx.status.confirmed && txBlockHeight > 0
+                ? tipHeight - txBlockHeight + 1
+                : 0;
+
+              logger.debug('Deposit candidate', {
+                txid: tx.txid, receivedSats, expectedAmount,
+                confirmed: tx.status.confirmed, confirmations, needed: neededConfs,
+              });
+
+              if (receivedSats >= expectedAmount && confirmations >= neededConfs) {
+                logger.info('Deposit fully confirmed for swap', {
+                  swapId, txid: tx.txid, amount: receivedSats, confirmations,
+                });
 
                 // Deduct commission + raffle
                 const commissionAmount = s.fee?.commissionAmount || 0;
-                const raffleAmount = Math.floor(expectedAmount * 0.001);
                 await treasuryEngine.trackEarnings(commissionAmount).catch(() => {});
                 await raffleEngine.trackSwapVolume(userId || 'unknown', expectedAmount).catch(() => {});
 
-                // Create Boltz submarine swap
+                // === NOW create the Boltz swap AFTER confirmed deposit ===
+                logger.info('Creating Boltz swap after confirmed deposit', { swapId });
                 const refundKeys = ECPair.makeRandom();
                 const res = await boltzClient.createSubmarineSwap({
                   from: 'BTC', to: 'BTC',
@@ -926,13 +1285,15 @@ async function monitorDepositAndSwap(
                       status: 'pending', completedAt: undefined },
                   ).catch(() => {});
 
-                  await botInstance.telegram.editMessageText(chatId, messageId, undefined,
-                    '✅ Depósito recibido: ' + receivedSats.toLocaleString() + ' sats\n\n' +
+                  const statusMsg =
+                    '✅ Depósito confirmado: ' + receivedSats.toLocaleString() + ' sats\n' +
+                    `(${confirmations} confirmaciones)\n\n` +
                     '📤 Enviado a Boltz: `' + sendResult + '`\n\n' +
                     'Swap creado: `' + res.id + '`\n' +
                     'Recibirás ' + (s.fee?.estimatedReceive?.toLocaleString() || '?') + ' sats en Lightning.\n\n' +
-                    '⏳ _Esperando que Boltz procese el pago..._',
-                  );
+                    '⏳ _Esperando que Boltz procese el pago..._';
+
+                  await botInstance.telegram.editMessageText(chatId, messageId, undefined, statusMsg);
 
                   // Subscribe to WebSocket for Boltz updates
                   if (boltzWebSocket) {
@@ -941,11 +1302,29 @@ async function monitorDepositAndSwap(
                     });
                     setTimeout(() => boltzWebSocket?.unsubscribe(res.id), 30 * 60 * 1000);
                   }
+
+                  // === Fallback polling: verify Boltz completed the swap ===
+                  startBoltzFallbackPoll(swapId, res.id, chatId, messageId, s, userId).catch((err) => {
+                    logger.error('Boltz fallback poll failed', { error: err, swapId, boltzId: res.id });
+                  });
                 } else {
-                  await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+                  // === CRITICAL: send failure — notify admin ===
+                  const failMsg =
                     '✅ Depósito recibido: ' + receivedSats.toLocaleString() + ' sats\n\n' +
-                    '⚠️ Error al enviar a Boltz. Swap #' + swapId + '.\n\n' +
-                    'Contacta a soporte con este ID.',
+                    '⚠️ *ERROR al enviar a Boltz.*\n\n' +
+                    'Swap #' + swapId + ' | Boltz: `' + res.id + '`\n\n' +
+                    'Contacta a soporte con este ID.';
+
+                  await botInstance.telegram.editMessageText(chatId, messageId, undefined, failMsg);
+
+                  await notifyAdmins(
+                    '❌ *FALLO CRÍTICO: No se pudo enviar a Boltz*\n\n' +
+                    `Swap: \`${swapId}\`\n` +
+                    `Boltz ID: \`${res.id}\`\n` +
+                    `Depósito: ${receivedSats.toLocaleString()} sats\n` +
+                    `Usuario: \`${userId || 'N/A'}\`\n` +
+                    `Boltz address: \`${res.address}\`\n` +
+                    `Expected: ${res.expectedAmount.toLocaleString()} sats`,
                   );
                 }
 
@@ -964,14 +1343,109 @@ async function monitorDepositAndSwap(
       }
     }
 
-    // Timeout
+    // === TIMEOUT: notify admin ===
+    logger.warn('Deposit monitor TIMEOUT', { swapId, expectedAmount, maxPolls });
+
     await botInstance.telegram.editMessageText(chatId, messageId, undefined,
       '⏰ Tiempo de espera agotado para el swap #' + swapId + '.\n\n' +
       'Si realizaste el depósito, contacta a soporte.',
     ).catch(() => {});
+
+    await notifyAdmins(
+      '⏰ *Timeout de depósito*\n\n' +
+      `Swap: \`${swapId}\`\n` +
+      `Usuario: \`${userId || 'N/A'}\`\n` +
+      `Monto esperado: ${expectedAmount.toLocaleString()} sats\n` +
+      `Wallet: \`${ourAddress}\`\n` +
+      `Tiempo: 60 minutos sin detectar depósito confirmado.`,
+    );
   } catch (error) {
     logger.error('Intermediary monitor failed', { error, swapId });
   }
+}
+
+// ============================================================
+// Fallback polling: verify Boltz completed the swap
+// (runs in parallel with WebSocket; catches missed events)
+// ============================================================
+async function startBoltzFallbackPoll(
+  swapId: string, boltzId: string, chatId: number, messageId: number,
+  session: SwapSession, userId?: string,
+): Promise<void> {
+  // Wait 5 min before starting fallback (let WebSocket do its job first)
+  await new Promise((r) => setTimeout(r, 5 * 60_000));
+
+  logger.info('Boltz fallback poll started', { swapId, boltzId });
+  const maxPolls = 60; // 30 min at 30s intervals
+
+  for (let i = 0; i < maxPolls; i++) {
+    await new Promise((r) => setTimeout(r, 30_000));
+
+    try {
+      const status = await boltzClient.getSwapStatus(boltzId);
+      logger.debug('Boltz fallback status', { boltzId, status, poll: i + 1 });
+
+      const terminalStatuses = ['transaction.claimed', 'invoice.settled', 'invoice.paid',
+        'transaction.failed', 'invoice.failedToPay', 'swap.expired', 'transaction.refunded'];
+
+      if (terminalStatuses.includes(status)) {
+        logger.info('Boltz fallback: terminal status reached', { boltzId, status });
+
+        if (status === 'transaction.claimed' || status === 'invoice.settled' || status === 'invoice.paid') {
+          // Completed successfully
+          await Swap.findOneAndUpdate(
+            { swapId },
+            { boltzStatus: status, status: 'completed', completedAt: new Date() },
+          ).catch(() => {});
+          if (userId && userId !== 'unknown') {
+            User.findOneAndUpdate(
+              { telegramId: userId },
+              { $inc: { swapsCount: 1, totalVolume: session.sourceAmount || 0 } },
+            ).catch(() => {});
+          }
+        } else {
+          // Failed — notify admins
+          await Swap.findOneAndUpdate(
+            { swapId },
+            { boltzStatus: status, status: 'failed' },
+          ).catch(() => {});
+          await notifyAdmins(
+            '❌ *Swap falló en Boltz*\n\n' +
+            `Swap: \`${swapId}\`\n` +
+            `Boltz ID: \`${boltzId}\`\n` +
+            `Estado: ${status}\n` +
+            `Usuario: \`${userId || 'N/A'}\``,
+          );
+        }
+
+        // Update user message
+        if (botInstance && status !== 'transaction.claimed' && status !== 'invoice.settled' && status !== 'invoice.paid') {
+          const failLabels: Record<string, string> = {
+            'transaction.failed': '❌ Transacción falló.',
+            'invoice.failedToPay': '❌ No se pudo pagar la invoice.',
+            'swap.expired': '⏰ Swap expirado. Fondos serán reembolsados.',
+            'transaction.refunded': '↩️ Fondos reembolsados.',
+          };
+          const label = failLabels[status] || ('❌ Swap falló: ' + status);
+          await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+            label + '\n\nSwap #' + swapId + '\nContacta a soporte.',
+          ).catch(() => {});
+        }
+        return;
+      }
+    } catch (err) {
+      logger.warn('Boltz fallback poll error', { boltzId, error: String(err) });
+    }
+  }
+
+  // Fallback timeout — notify admins (swap may have completed but we couldn't verify)
+  logger.warn('Boltz fallback poll TIMEOUT', { swapId, boltzId });
+  await notifyAdmins(
+    '⚠️ *Verificación de swap incompleta*\n\n' +
+    `Swap: \`${swapId}\`\n` +
+    `Boltz ID: \`${boltzId}\`\n` +
+    'No se pudo verificar el estado final. Revisar manualmente.',
+  );
 }
 
 // ============================================================
