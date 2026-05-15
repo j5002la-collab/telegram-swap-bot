@@ -579,15 +579,20 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
             const t0 = Date.now();
             const estimate = await cnClient.estimate(fromAsset.ticker, toAsset.ticker, fromAmount, fromAsset.network, toAsset.network);
             logger.debug('Swap: ChangeNOW estimate response', { from: `${fromAsset.ticker}:${fromAsset.network}`, to: toAsset.ticker, ms: Date.now() - t0 });
+
+            // Calculate receive amount in sats directly from ChangeNOW response
+            const btcEst = parseFloat(estimate.toAmount || estimate.estimatedAmount || '0');
+            const receiveSats = Math.round(btcEst * 100_000_000);
+
             rateInfo = {
-              boltzRate: parseFloat((estimate.toAmount || estimate.estimatedAmount || '0')) / parseFloat(fromAmount),
-              userRate: parseFloat((estimate.toAmount || estimate.estimatedAmount || '0')) / parseFloat(fromAmount),
-              boltzFeePct: 0.5, // ChangeNOW fixed-rate fee
+              boltzRate: btcEst / parseFloat(fromAmount),
+              userRate: receiveSats / amount,  // sats per cent
+              boltzFeePct: 0,
               boltzMinerFee: 0,
-              botCommissionPct: commissionEngine.getCommissionRate(),
+              botCommissionPct: 0,  // commission is internal
               botCommissionAmount: 0,
-              minAmount: 1000,  // ~$10 in cents
-              maxAmount: 2000000, // ~$20,000 in cents
+              minAmount: 1000,
+              maxAmount: 2000000,
               pairHash: estimate.rateId,
             };
           }
@@ -697,13 +702,30 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
     s.step = 'confirm';
     setSs(ctx, s);
 
-    const sourceLabel = isBTC ? 'sats' : (s.currency || 'USDT');
-    const destLabel = isBTC ? 'sats' : 'BTC';
-    const msg = commissionEngine.formatBreakdown(fee, sourceLabel, destLabel);
+    if (!isBTC) {
+      // ChangeNOW (USDC/USDT → BTC): clean display, no commission breakdown
+      const usdAmount = (sourceAmount / 100).toFixed(2);
+      const btcAmount = (receiveAmount / 100_000_000).toFixed(8);
+      const lines = [
+        '📋 *Resumen de tu swap*',
+        '',
+        `Envías: $${usdAmount} ${s.currency || 'USDT'} (${s.sourceChain})`,
+        `Recibirás: ${receiveAmount.toLocaleString()} sats (${btcAmount} BTC)`,
+        '',
+        '⏱ Tiempo estimado: 5-30 minutos',
+      ];
+      await ctx.reply(lines.join('\n'), Markup.inlineKeyboard([
+        [Markup.button.callback('✅ Confirmar', 'swap_confirm'), Markup.button.callback('❌ Cancelar', 'swap_cancel')],
+      ]));
+    } else {
+      const sourceLabel = isBTC ? 'sats' : (s.currency || 'USDT');
+      const destLabel = isBTC ? 'sats' : 'BTC';
+      const msg = commissionEngine.formatBreakdown(fee, sourceLabel, destLabel);
 
-    await ctx.reply(msg, Markup.inlineKeyboard([
-      [Markup.button.callback('✅ Confirmar', 'swap_confirm'), Markup.button.callback('❌ Cancelar', 'swap_cancel')],
-    ]));
+      await ctx.reply(msg, Markup.inlineKeyboard([
+        [Markup.button.callback('✅ Confirmar', 'swap_confirm'), Markup.button.callback('❌ Cancelar', 'swap_cancel')],
+      ]));
+    }
   } catch (error) {
     logger.error('Process amount error', { error });
     await ctx.reply(SWAP_ERROR);
@@ -941,7 +963,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
             '🏦 *Deposita a nuestra wallet*\n\n' +
             'Envía **' + s.sourceAmount!.toLocaleString() + ' sats** a:\n\n' +
             '`' + ourAddress + '`\n\n' +
-            'Al confirmarse el depósito, crearemos el swap con Boltz\n' +
+            'Al confirmarse el depósito, crearemos el swap\n' +
             'y pagaremos tu invoice Lightning de ' +
             (s.fee?.estimatedReceive?.toLocaleString() || '?') + ' sats.\n\n' +
             '⏱ Tiempo estimado: 10-60 minutos',
@@ -1391,10 +1413,10 @@ async function monitorDepositAndSwap(
                       '✅ Depósito confirmado: ' + receivedSats.toLocaleString() + ' sats\n' +
                       `(${confirmations} confirmaciones)\n` +
                       `TX: \`${tx.txid.slice(0, 16)}...\`\n\n` +
-                      '📤 Enviado a Boltz: `' + sendResult + '`\n\n' +
-                      'Swap Boltz: `' + res.id + '`\n' +
+                      '📤 Enviado: `' + sendResult + '`\n\n' +
+                      'Swap: `' + res.id + '`\n' +
                       'Recibirás ' + (s.fee?.estimatedReceive?.toLocaleString() || '?') + ' sats en Lightning.\n\n' +
-                      '⏳ _Esperando que Boltz procese el pago..._';
+                      '⏳ _Esperando confirmación del pago..._';
 
                     await botInstance.telegram.editMessageText(chatId, messageId, undefined, statusMsg);
 
@@ -1420,8 +1442,8 @@ async function monitorDepositAndSwap(
 
                     const failMsg =
                       '✅ Depósito recibido: ' + receivedSats.toLocaleString() + ' sats\n\n' +
-                      '⚠️ *ERROR al enviar a Boltz.*\n\n' +
-                      'Swap #' + swapId + ' | Boltz: `' + res.id + '`\n\n' +
+                      '⚠️ *ERROR al procesar el swap.*\n\n' +
+                      'Swap #' + swapId + '\n\n' +
                       'Contacta a soporte con este ID.';
 
                     await botInstance.telegram.editMessageText(chatId, messageId, undefined, failMsg);
@@ -1448,7 +1470,7 @@ async function monitorDepositAndSwap(
 
                   await botInstance.telegram.editMessageText(chatId, messageId, undefined,
                     '✅ Depósito recibido: ' + receivedSats.toLocaleString() + ' sats\n\n' +
-                    '⚠️ Error al crear swap con Boltz.\n\n' +
+                    '⚠️ Error al crear el swap.\n\n' +
                     'Swap #' + swapId + '\n' +
                     'Contacta a soporte con este ID.',
                   ).catch(() => {});
@@ -1771,7 +1793,7 @@ async function updateSwapMessage(
     'swap.created': '⏳ Swap creado. Esperando tu transacción...',
     'invoice.set': '📋 Invoice validada. Envía tus BTC a la dirección indicada.',
     'transaction.mempool': '🔍 Transacción detectada en la red (mempool). Esperando confirmación...',
-    'transaction.confirmed': '✅ Transacción confirmada. Boltz está pagando tu invoice Lightning...',
+    'transaction.confirmed': '✅ Transacción confirmada. Pagando tu invoice Lightning...',
     'invoice.pending': '⚡ Pagando invoice Lightning...',
     'invoice.paid': '💰 Invoice pagada. Completando swap...',
     'transaction.claim.pending': '🔐 Finalizando swap...',
