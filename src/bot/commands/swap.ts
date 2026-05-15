@@ -579,15 +579,20 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
             const t0 = Date.now();
             const estimate = await cnClient.estimate(fromAsset.ticker, toAsset.ticker, fromAmount, fromAsset.network, toAsset.network);
             logger.debug('Swap: ChangeNOW estimate response', { from: `${fromAsset.ticker}:${fromAsset.network}`, to: toAsset.ticker, ms: Date.now() - t0 });
+
+            // Calculate receive amount in sats directly from ChangeNOW response
+            const btcEst = parseFloat(estimate.toAmount || estimate.estimatedAmount || '0');
+            const receiveSats = Math.round(btcEst * 100_000_000);
+
             rateInfo = {
-              boltzRate: parseFloat((estimate.toAmount || estimate.estimatedAmount || '0')) / parseFloat(fromAmount),
-              userRate: parseFloat((estimate.toAmount || estimate.estimatedAmount || '0')) / parseFloat(fromAmount),
-              boltzFeePct: 0.5, // ChangeNOW fixed-rate fee
+              boltzRate: btcEst / parseFloat(fromAmount),
+              userRate: receiveSats / amount,  // sats per cent
+              boltzFeePct: 0,
               boltzMinerFee: 0,
-              botCommissionPct: commissionEngine.getCommissionRate(),
+              botCommissionPct: 0,  // commission is internal
               botCommissionAmount: 0,
-              minAmount: 1000,  // ~$10 in cents
-              maxAmount: 2000000, // ~$20,000 in cents
+              minAmount: 1000,
+              maxAmount: 2000000,
               pairHash: estimate.rateId,
             };
           }
@@ -697,13 +702,30 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
     s.step = 'confirm';
     setSs(ctx, s);
 
-    const sourceLabel = isBTC ? 'sats' : (s.currency || 'USDT');
-    const destLabel = isBTC ? 'sats' : 'BTC';
-    const msg = commissionEngine.formatBreakdown(fee, sourceLabel, destLabel);
+    if (!isBTC) {
+      // ChangeNOW (USDC/USDT → BTC): clean display, no commission breakdown
+      const usdAmount = (sourceAmount / 100).toFixed(2);
+      const btcAmount = (receiveAmount / 100_000_000).toFixed(8);
+      const lines = [
+        '📋 *Resumen de tu swap*',
+        '',
+        `Envías: $${usdAmount} ${s.currency || 'USDT'} (${s.sourceChain})`,
+        `Recibirás: ${receiveAmount.toLocaleString()} sats (${btcAmount} BTC)`,
+        '',
+        '⏱ Tiempo estimado: 5-30 minutos',
+      ];
+      await ctx.reply(lines.join('\n'), Markup.inlineKeyboard([
+        [Markup.button.callback('✅ Confirmar', 'swap_confirm'), Markup.button.callback('❌ Cancelar', 'swap_cancel')],
+      ]));
+    } else {
+      const sourceLabel = isBTC ? 'sats' : (s.currency || 'USDT');
+      const destLabel = isBTC ? 'sats' : 'BTC';
+      const msg = commissionEngine.formatBreakdown(fee, sourceLabel, destLabel);
 
-    await ctx.reply(msg, Markup.inlineKeyboard([
-      [Markup.button.callback('✅ Confirmar', 'swap_confirm'), Markup.button.callback('❌ Cancelar', 'swap_cancel')],
-    ]));
+      await ctx.reply(msg, Markup.inlineKeyboard([
+        [Markup.button.callback('✅ Confirmar', 'swap_confirm'), Markup.button.callback('❌ Cancelar', 'swap_cancel')],
+      ]));
+    }
   } catch (error) {
     logger.error('Process amount error', { error });
     await ctx.reply(SWAP_ERROR);
