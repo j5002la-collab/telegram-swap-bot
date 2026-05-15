@@ -96,7 +96,8 @@ export class CommissionEngine {
       `Convertir: ${this.formatAmount(fee.sourceAmount, sourceLabel)}`,
       `Recibirás: ${this.formatAmount(fee.estimatedReceive, destLabel)}`,
       '',
-      `Comisión SwapBot (${fee.commissionRate}%): ${this.formatAmount(fee.commissionAmount, sourceLabel)}`,
+      `*Comisiones:*`,
+      `  └── SwapBot (${fee.commissionRate}%): ${this.formatAmount(fee.commissionAmount, sourceLabel)}`,
       '',
       `⏱ Tiempo estimado: 1\\-5 minutos`,
     ];

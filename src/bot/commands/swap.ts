@@ -672,7 +672,10 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
         `Envías: ${sourceAmount.toLocaleString()} sats on-chain`,
         `Recibes en Lightning: ${receiveAmount.toLocaleString()} sats (tu invoice)`,
         '',
-        `Comisión SwapBot (${rateInfo.botCommissionPct}%): ${commissionAmount.toLocaleString()} sats`,
+        '*Comisiones incluidas:*',
+        `  ├── SwapBot (${rateInfo.botCommissionPct}%): ${commissionAmount.toLocaleString()} sats`,
+        `  ├── Minería: ${rateInfo.boltzMinerFee} sats`,
+        `  └── Sorteo (0.1%): ${raffleContribution.toLocaleString()} sats`,
         '',
         `⏱ Tiempo estimado: 10-30 minutos`,
       ];
