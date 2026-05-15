@@ -1463,10 +1463,27 @@ async function startBoltzFallbackPoll(
             { swapId },
             { boltzStatus: status, status: 'completed', completedAt: new Date() },
           ).catch(() => {});
+
+          // Track stats: user, commission, raffle
           if (userId && userId !== 'unknown') {
             User.findOneAndUpdate(
               { telegramId: userId },
               { $inc: { swapsCount: 1, totalVolume: session.sourceAmount || 0 } },
+            ).catch(() => {});
+          }
+          const commissionAmount = session.fee?.commissionAmount || 0;
+          treasuryEngine.trackEarnings(commissionAmount).catch(() => {});
+          raffleEngine.trackSwapVolume(userId || 'unknown', session.sourceAmount || 0).catch(() => {});
+
+          // Notify user that swap completed
+          if (botInstance) {
+            const receiveAmount = session.fee?.estimatedReceive?.toLocaleString() || '?';
+            await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+              '🎉 *¡Swap completado!*\n\n' +
+              'Swap: `' + swapId + '`\n' +
+              'Boltz: `' + boltzId + '`\n' +
+              'Recibiste ' + receiveAmount + ' sats en tu wallet Lightning.\n\n' +
+              'Usa /swap para un nuevo intercambio.',
             ).catch(() => {});
           }
         } else {
