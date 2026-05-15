@@ -292,7 +292,10 @@ export async function sendToAddress(
     logger.info('Transaction broadcast', { txid: broadcastResult, amount: amountSats, to: toAddress });
     return broadcastResult;
   } catch (error: any) {
-    const detail = error?.message || error?.response?.data || String(error);
+    const body = error?.response?.data;
+    const detail = body
+      ? `${error.message} | response: ${typeof body === 'string' ? body.slice(0, 200) : JSON.stringify(body).slice(0, 200)}`
+      : error?.message || String(error);
     logger.error('Failed to send transaction', { error: detail, to: toAddress, amount: amountSats });
     return null;
   }

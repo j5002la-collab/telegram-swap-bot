@@ -24,6 +24,12 @@ const ECPair = ECPairFactory(ecc);
 let botInstance: Telegraf<Context> | null = null;
 let boltzWebSocket: BoltzWebSocket | null = null;
 
+/** Format a sats amount for display: < 1M sats → 'X sats', >= 1M → 'X.XXXXXXXX BTC' */
+function formatSats(amountSats: number): string {
+  if (amountSats < 1_000_000) return amountSats.toLocaleString() + ' sats';
+  return (amountSats / 100_000_000).toFixed(8) + ' BTC (' + amountSats.toLocaleString() + ' sats)';
+}
+
 /** Minimum confirmations before creating Boltz swap:
  *  - <= 1M sats: 1 confirmation
  *  - 1M - 10M sats: 2 confirmations
@@ -1414,7 +1420,7 @@ async function monitorDepositAndSwap(
                     ).catch(() => {});
 
                     const statusMsg =
-                      '✅ Depósito confirmado: ' + receivedSats.toLocaleString() + ' sats\n' +
+                      '✅ Depósito confirmado: ' + formatSats(receivedSats) + '\n' +
                       `(${confirmations} confirmaciones)\n` +
                       `TX: \`${tx.txid.slice(0, 16)}...\`\n\n` +
                       '📤 Enviado: `' + sendResult + '`\n\n' +
@@ -1445,7 +1451,7 @@ async function monitorDepositAndSwap(
                     ).catch(() => {});
 
                     const failMsg =
-                      '✅ Depósito recibido: ' + receivedSats.toLocaleString() + ' sats\n\n' +
+                      '✅ Depósito recibido: ' + formatSats(receivedSats) + '\n\n' +
                       '⚠️ *ERROR al procesar el swap.*\n\n' +
                       'Swap #' + swapId + '\n\n' +
                       'Contacta a soporte con este ID.';
@@ -1473,7 +1479,7 @@ async function monitorDepositAndSwap(
                   ).catch(() => {});
 
                   await botInstance.telegram.editMessageText(chatId, messageId, undefined,
-                    '✅ Depósito recibido: ' + receivedSats.toLocaleString() + ' sats\n\n' +
+                    '✅ Depósito recibido: ' + formatSats(receivedSats) + '\n\n' +
                     '⚠️ Error al crear el swap.\n\n' +
                     'Swap #' + swapId + '\n' +
                     'Contacta a soporte con este ID.',
