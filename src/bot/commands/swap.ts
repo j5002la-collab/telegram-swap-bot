@@ -10,7 +10,7 @@ import { Swap, SwapDirection, ChainNetwork, User } from '../../models';
 import { boltzClient } from '../../boltz/client';
 import { BoltzWebSocket } from '../../boltz/websocket';
 import { getCNClient } from '../../changenow/client';
-import { getWalletAddress, isWalletReady, sendToAddress } from '../../engine/wallet';
+import { getWalletAddress, isWalletReady, sendToAddress, getPublicKeyHex } from '../../engine/wallet';
 import axios from 'axios';
 import type { BoltzSwapStatus } from '../../boltz/types';
 import bolt11 from 'bolt11';
@@ -839,39 +839,81 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
       let preimageHex: string | undefined;
 
       if (isReverse) {
-        logger.debug('Swap: creating Boltz reverse swap', { amount: s.sourceAmount });
+        if (!s.destAddress) { await ctx.editMessageText('Falta la dirección BTC. Usa /swap.'); clearSs(ctx); return; }
+
+        logger.debug('Swap: creating Boltz reverse swap', { amount: s.sourceAmount, destAddr: s.destAddress.slice(0, 12) + '...' });
         const t0 = Date.now();
         const preimage = crypto.randomBytes(32);
         preimageHex = preimage.toString('hex');
-        const claimKeys = ECPair.makeRandom();
+
+        const walletReady = isWalletReady();
+        // Use bot keyPair if available → BTC comes to our wallet → we forward
+        const claimPubKey = walletReady
+          ? getPublicKeyHex()!
+          : Buffer.from(ECPair.makeRandom().publicKey).toString('hex');
+
         const res = await boltzClient.createReverseSwap({
           from: 'BTC', to: 'BTC', invoiceAmount: s.sourceAmount,
-          claimPublicKey: Buffer.from(claimKeys.publicKey).toString('hex'),
+          claimPublicKey: claimPubKey,
           preimageHash: crypto.createHash('sha256').update(preimage).digest('hex'),
         });
         swapServiceId = res.id;
-        logger.debug('Swap: Boltz reverse swap created', { boltzId: res.id, ms: Date.now() - t0 });
-        // Save pending swap with preimage for recovery
+
+        // Calculate what user will receive (sourceAmount minus commission)
+        const commissionAmount = s.fee?.commissionAmount || 0;
+        const userReceives = (s.sourceAmount || 0) - commissionAmount;
+
+        // Save pending swap
         await Swap.create({
           swapId, userId: userState?.userId || 'unknown',
           direction: s.direction,
           sourceChain: s.sourceChain, destChain: s.destChain,
-          sourceAmount: s.sourceAmount!, destAmount: res.expectedAmount || s.sourceAmount || 0,
+          sourceAmount: s.sourceAmount!, destAmount: walletReady ? userReceives : (res.expectedAmount || s.sourceAmount || 0),
           sourceCurrency: 'BTC', destCurrency: 'BTC',
           boltzSwapId: swapServiceId, boltzStatus: 'swap.created',
           commissionRate: s.fee?.commissionRate || 0,
-          commissionAmount: s.fee?.commissionAmount || 0,
-          botProfit: s.fee?.botProfit || 0,
+          commissionAmount: walletReady ? commissionAmount : 0,
+          botProfit: walletReady ? commissionAmount : 0,
           preimage: preimageHex,
           status: 'pending',
         });
-        await ctx.editMessageText(
-          'Intercambio creado! (Lightning -> On-chain)\n\n' +
-          'Paga esta invoice desde tu wallet Lightning:\n\n' +
-          '`' + res.invoice + '`\n\n' +
-          'Monto: ' + s.sourceAmount.toLocaleString() + ' sats\n' +
-          'Al pagar, se completa solo. Tiempo: 1-5 min.',
-        );
+
+        const lines = [
+          '⚡ *Intercambio creado! (Lightning → On-chain)*',
+          '',
+          'Paga esta invoice desde tu wallet Lightning:',
+          '`' + res.invoice + '`',
+          '',
+          `Monto a pagar: ${s.sourceAmount!.toLocaleString()} sats`,
+        ];
+
+        if (walletReady) {
+          lines.push(`Recibirás en \`${s.destAddress.slice(0, 12)}...\`: ${userReceives.toLocaleString()} sats`);
+          lines.push(`(Comisión SwapBot ${s.fee?.commissionRate || 0}%: ${commissionAmount.toLocaleString()} sats)`);
+        } else {
+          lines.push('Recibirás los BTC directamente en tu wallet.');
+        }
+
+        lines.push('', '⏱ Al pagar, 1-5 minutos.');
+
+        await ctx.editMessageText(lines.join('\n'));
+
+        // Start monitoring for settlement + forward (intermediary mode)
+        if (walletReady && chatId && messageId) {
+          monitorReverseSwapAndForward(
+            swapId, swapServiceId, preimageHex,
+            s.sourceAmount!, userReceives, s.destAddress,
+            chatId, messageId, userState?.userId,
+          ).catch((err) => {
+            logger.error('Reverse swap monitor failed', { error: err, swapId, boltzId: swapServiceId });
+          });
+        } else if (!walletReady && boltzWebSocket) {
+          // Direct mode: subscribe to WS for status only
+          boltzWebSocket.subscribe(swapServiceId, (_id, status) => {
+            logger.debug('Reverse swap WS status', { boltzId: swapServiceId, status });
+          });
+          setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId), 30 * 60 * 1000);
+        }
       } else {
         if (!s.invoice) { await ctx.editMessageText('Falta la invoice. Usa /swap.'); clearSs(ctx); return; }
 
@@ -1557,6 +1599,162 @@ async function startBoltzFallbackPoll(
     `Swap: \`${swapId}\`\n` +
     `Boltz ID: \`${boltzId}\`\n` +
     'No se pudo verificar el estado final. Revisar manualmente.',
+  );
+}
+
+// ============================================================
+// Reverse swap (LN→BTC) monitor + forward
+// ============================================================
+async function monitorReverseSwapAndForward(
+  swapId: string, boltzId: string, preimageHex: string,
+  invoiceAmount: number, userReceives: number, destAddress: string,
+  chatId: number, messageId: number, userId?: string,
+): Promise<void> {
+  if (!botInstance) return;
+
+  logger.info('Reverse swap monitor started', { swapId, boltzId, invoiceAmount, userReceives, dest: destAddress.slice(0, 12) + '...' });
+
+  // Step 1: Wait for Boltz to settle the invoice
+  const maxPolls = 120; // 60 min at 30s intervals
+  for (let i = 0; i < maxPolls; i++) {
+    await new Promise((r) => setTimeout(r, 30_000));
+
+    try {
+      const status = await boltzClient.getSwapStatus(boltzId);
+      logger.debug('Reverse swap status', { boltzId, status, poll: i + 1 });
+
+      const terminalStatuses = ['invoice.settled', 'invoice.expired', 'transaction.failed', 'swap.expired', 'transaction.refunded'];
+
+      if (terminalStatuses.includes(status)) {
+        if (status !== 'invoice.settled') {
+          logger.warn('Reverse swap failed', { swapId, boltzId, status });
+          await Swap.findOneAndUpdate({ swapId }, { boltzStatus: status, status: 'failed' }).catch(() => {});
+          await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+            '❌ Swap #' + swapId + ' no se completó.\n\n' +
+            'Estado: ' + status + '\nContacta a soporte.',
+          ).catch(() => {});
+          await notifyAdmins(
+            '❌ *Reverse swap falló*\n\n' +
+            `Swap: \`${swapId}\` | Boltz: \`${boltzId}\`\n` +
+            `Estado: ${status}\nUsuario: \`${userId || 'N/A'}\``,
+          );
+          return;
+        }
+
+        // === Swap settled! BTC should be at our wallet now ===
+        logger.info('Reverse swap settled, monitoring for BTC', { swapId, boltzId });
+
+        await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+          '✅ Invoice pagada. Esperando confirmación on-chain...',
+        ).catch(() => {});
+
+        // Step 2: Wait for BTC to arrive at our wallet
+        const ourAddress = getWalletAddress();
+        const depositPolls = 90; // 30 min at 20s intervals
+        let forwarded = false;
+
+        for (let j = 0; j < depositPolls; j++) {
+          await new Promise((r) => setTimeout(r, 20_000));
+
+          try {
+            const url = `https://mempool.space/api/address/${ourAddress}/txs`;
+            const { data } = await axios.get<Array<{
+              txid: string;
+              vout: Array<{ scriptpubkey_address: string; value: number }>;
+              status: { confirmed: boolean; block_height?: number };
+            }>>(url, { timeout: 10000 });
+
+            for (const tx of data) {
+              if (!tx.status.confirmed) continue;
+              for (const vout of tx.vout) {
+                if (vout.scriptpubkey_address !== ourAddress) continue;
+                const receivedSats = Math.round(vout.value * 100_000_000);
+
+                // Match: received amount should cover userReceives + fee buffer
+                if (receivedSats >= userReceives + 500) {
+                  logger.info('Reverse swap BTC detected', { swapId, txid: tx.txid, receivedSats });
+
+                  // Forward BTC to user
+                  const sendResult = await sendToAddress(destAddress, userReceives);
+
+                  if (sendResult) {
+                    // Success!
+                    await Swap.findOneAndUpdate(
+                      { swapId },
+                      { boltzStatus: 'invoice.settled', status: 'completed', completedAt: new Date() },
+                    ).catch(() => {});
+
+                    // Track stats
+                    const commissionAmount = invoiceAmount - userReceives;
+                    treasuryEngine.trackEarnings(commissionAmount).catch(() => {});
+                    raffleEngine.trackSwapVolume(userId || 'unknown', invoiceAmount).catch(() => {});
+                    if (userId && userId !== 'unknown') {
+                      User.findOneAndUpdate(
+                        { telegramId: userId },
+                        { $inc: { swapsCount: 1, totalVolume: invoiceAmount } },
+                      ).catch(() => {});
+                    }
+
+                    await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+                      '🎉 *¡Swap completado!*\n\n' +
+                      `Swap: \`${swapId}\`\n` +
+                      `Pagaste ${invoiceAmount.toLocaleString()} sats por Lightning\n` +
+                      `Recibiste ${userReceives.toLocaleString()} sats en \`${destAddress.slice(0, 12)}...\`\n` +
+                      `TX: \`${sendResult}\`\n\n` +
+                      'Usa /swap para un nuevo intercambio.',
+                    ).catch(() => {});
+                  } else {
+                    // Send failed
+                    await Swap.findOneAndUpdate(
+                      { swapId },
+                      { boltzStatus: 'forward_failed', status: 'failed' },
+                    ).catch(() => {});
+                    await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+                      '⚠️ BTC recibidos pero error al enviar a tu dirección.\n\n' +
+                      'Swap #' + swapId + '\nContacta a soporte.',
+                    ).catch(() => {});
+                    await notifyAdmins(
+                      '❌ *Forward falló en reverse swap*\n\n' +
+                      `Swap: \`${swapId}\` | Boltz: \`${boltzId}\`\n` +
+                      `User: \`${userId || 'N/A'}\`\n` +
+                      `Dest: \`${destAddress}\`\n` +
+                      `Amount: ${userReceives.toLocaleString()} sats`,
+                    );
+                  }
+                  forwarded = true;
+                  break;
+                }
+              }
+              if (forwarded) break;
+            }
+            if (forwarded) break;
+          } catch (err) {
+            logger.warn('Reverse swap deposit poll error', { swapId, error: String(err) });
+          }
+        }
+
+        if (!forwarded) {
+          logger.warn('Reverse swap: BTC never arrived', { swapId, boltzId });
+          await Swap.findOneAndUpdate({ swapId }, { boltzStatus: 'btc_not_received', status: 'failed' }).catch(() => {});
+          await notifyAdmins(
+            '⚠️ *Reverse swap: BTC no detectado*\n\n' +
+            `Swap: \`${swapId}\` | Boltz: \`${boltzId}\`\n` +
+            `Invoice pagada pero no se detectó BTC en wallet.`,
+          );
+        }
+        return;
+      }
+    } catch (err) {
+      logger.warn('Reverse swap status poll error', { boltzId, error: String(err) });
+    }
+  }
+
+  // Timeout
+  logger.warn('Reverse swap monitor TIMEOUT', { swapId, boltzId });
+  await notifyAdmins(
+    '⏰ *Reverse swap timeout*\n\n' +
+    `Swap: \`${swapId}\` | Boltz: \`${boltzId}\`\n` +
+    'No se detectó settlement en 60 min.',
   );
 }
 

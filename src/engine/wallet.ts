@@ -23,6 +23,12 @@ export interface WalletStatus {
 
 let keyPair: ReturnType<typeof ECPair.fromWIF> | null = null;
 
+/** Get the hex-encoded public key for claim/reverse swaps. Returns null if wallet not initialized. */
+export function getPublicKeyHex(): string | null {
+  if (!keyPair) return null;
+  return Buffer.from(keyPair.publicKey).toString('hex');
+}
+
 /**
  * Initialize wallet from WIF private key in config.
  */
