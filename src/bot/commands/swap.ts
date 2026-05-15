@@ -503,7 +503,7 @@ export async function handleSwapAddress(ctx: Context, next: () => Promise<void>)
           ? 'Dirección guardada. La invoice no tiene monto incluido.\n\n'
           : 'Dirección guardada. ') +
         'Ahora ingresa el monto en USD:\n' +
-        'Ejemplo: 100 ($100 USD)\n\n' +
+        'Ejemplo: 10 ($10 USD)\n\n' +
         'Responde con el número.',
         Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
       );
@@ -536,7 +536,11 @@ export async function handleSwapAmount(ctx: Context, next: () => Promise<void>):
     return;
   }
 
-  await processAmount(ctx, amount);
+  // USDC/USDT: user enters dollars (e.g. 30 = $30), convert to cents
+  const isStablecoin = s.currency === 'USDT' || s.currency === 'USDC';
+  const finalAmount = isStablecoin ? amount * 100 : amount;
+
+  await processAmount(ctx, finalAmount);
 }
 
 async function processAmount(ctx: Context, amount: number): Promise<void> {
