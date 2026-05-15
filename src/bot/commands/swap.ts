@@ -339,6 +339,15 @@ export async function handleSwapDirection(ctx: Context): Promise<void> {
       'BTC On-chain -> Lightning\n\nPega tu invoice de Lightning (lnbc...).\nEl monto se detectará automáticamente.',
       Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
     );
+  } else if (s.currency === 'BTC' && dir === 'LN2ONCHAIN') {
+    // Lightning → On-chain: ask for destination BTC address first
+    s.step = 'address';
+    setSs(ctx, s);
+    logger.debug('Swap: LN2ONCHAIN → waiting for BTC address', { userId: ctx.from?.id });
+    await ctx.editMessageText(
+      'Lightning → BTC On-chain\n\nPega tu dirección BTC (bc1...) donde recibirás los fondos.',
+      Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
+    );
   } else if (s.currency !== 'BTC') {
     s.step = 'address';
     setSs(ctx, s);
@@ -432,6 +441,27 @@ export async function handleSwapAddress(ctx: Context, next: () => Promise<void>)
       'Dirección ' + destCur + ' (' + (s.destChain || '') + ') guardada.\n\n' +
       'Ahora ingresa cuántos sats quieres ENVIAR:\n' +
       'Ejemplo: 100000 (100,000 sats)\n\n' +
+      'Responde con el número.',
+      Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
+    );
+    return;
+  }
+
+  // LN2ONCHAIN: destination is BTC on-chain address
+  if (s.direction === 'LN2ONCHAIN') {
+    // Validate: should start with bc1 (SegWit) or 1/3 (legacy)
+    if (!raw.startsWith('bc1') && !raw.startsWith('1') && !raw.startsWith('3')) {
+      await ctx.reply('Dirección BTC inválida. Debe empezar con bc1, 1, o 3.\n\nIntenta de nuevo.');
+      return;
+    }
+    s.destAddress = raw;
+    s.step = 'amount';
+    setSs(ctx, s);
+    logger.info('LN2ONCHAIN address saved', { addr: raw.slice(0, 20) + '...' });
+    await ctx.reply(
+      'Dirección BTC guardada: `' + raw.slice(0, 12) + '...`\n\n' +
+      'Ahora ingresa cuántos sats quieres ENVIAR por Lightning:\n' +
+      'Min: 25,000 | Max: 25,000,000\n\n' +
       'Responde con el número.',
       Markup.inlineKeyboard([[Markup.button.callback('Cancelar', 'swap_cancel')]]),
     );
@@ -642,11 +672,7 @@ async function processAmount(ctx: Context, amount: number): Promise<void> {
         `Envías: ${sourceAmount.toLocaleString()} sats on-chain`,
         `Recibes en Lightning: ${receiveAmount.toLocaleString()} sats (tu invoice)`,
         '',
-        '*Comisiones incluidas:*',
-        `  ├── SwapBot (${rateInfo.botCommissionPct}%): ${commissionAmount.toLocaleString()} sats`,
-        `  ├── Red Boltz (${rateInfo.boltzFeePct}%): ${boltzFeeAmount.toLocaleString()} sats`,
-        `  ├── Minería: ${rateInfo.boltzMinerFee} sats`,
-        `  └── Sorteo (0.1%): ${raffleContribution.toLocaleString()} sats`,
+        `Comisión SwapBot (${rateInfo.botCommissionPct}%): ${commissionAmount.toLocaleString()} sats`,
         '',
         `⏱ Tiempo estimado: 10-30 minutos`,
       ];
