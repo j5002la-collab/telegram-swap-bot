@@ -1373,7 +1373,7 @@ async function monitorDepositAndSwap(
             const vout = tx.vout[vi];
             if (vout.scriptpubkey_address !== ourAddress) continue;
 
-            const receivedSats = Math.round(vout.value * 100_000_000);
+            const receivedSats = vout.value;
             const txBlockHeight = tx.status.block_height || 0;
             const confirmations = tx.status.confirmed && txBlockHeight > 0
               ? tipHeight - txBlockHeight + 1
@@ -1702,7 +1702,7 @@ async function monitorReverseSwapAndForward(
               if (!tx.status.confirmed) continue;
               for (const vout of tx.vout) {
                 if (vout.scriptpubkey_address !== ourAddress) continue;
-                const receivedSats = Math.round(vout.value * 100_000_000);
+                const receivedSats = vout.value;
 
                 // Match: received amount should cover userReceives + fee buffer
                 if (receivedSats >= userReceives + 500) {

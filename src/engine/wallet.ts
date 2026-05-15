@@ -92,7 +92,7 @@ export async function checkDeposits(sinceTxid?: string): Promise<DepositInfo[]> 
           deposits.push({
             txid: tx.txid,
             vout: i,
-            amount: Math.round(vout.value * 100_000_000), // BTC → sats
+            amount: vout.value, // value is in sats
             confirmations: tx.status.confirmed ? 1 : 0,
             address: config.btcAddress,
           });
@@ -161,7 +161,7 @@ export function getWalletAddress(): string {
 interface Utxo {
   txid: string;
   vout: number;
-  value: number; // sats (converted from BTC at fetch time)
+  value: number; // sats (mempool.space returns value as integer sats)
 }
 
 /** Fetch UTXOs for our address from mempool.space */
@@ -179,7 +179,7 @@ async function getUtxos(): Promise<Utxo[]> {
     .map((u) => ({
       txid: u.txid,
       vout: u.vout,
-      value: Math.round(u.value * 100_000_000), // mempool.space returns BTC → convert to sats
+      value: u.value, // mempool.space returns value in sats (integer)
     }));
 }
 
