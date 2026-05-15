@@ -447,8 +447,8 @@ export async function handleSwapAddress(ctx: Context, next: () => Promise<void>)
     return;
   }
 
-  // LN2ONCHAIN: destination is BTC on-chain address
-  if (s.direction === 'LN2ONCHAIN') {
+  // LN2ONCHAIN (real BTC Lightning → On-chain): destination is BTC address
+  if (s.direction === 'LN2ONCHAIN' && s.currency === 'BTC') {
     // Validate: should start with bc1 (SegWit) or 1/3 (legacy)
     if (!raw.startsWith('bc1') && !raw.startsWith('1') && !raw.startsWith('3')) {
       await ctx.reply('Dirección BTC inválida. Debe empezar con bc1, 1, o 3.\n\nIntenta de nuevo.');
