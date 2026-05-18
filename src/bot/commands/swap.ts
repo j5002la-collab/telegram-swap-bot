@@ -1627,8 +1627,9 @@ async function monitorDepositAndSwap(
                 return;
               }
 
-              // Only mark CONFIRMED txids as seen — unconfirmed may confirm later
-              if (tx.status.confirmed) {
+              // Only mark as seen when confirmations are sufficient.
+              // Otherwise the TX may reach required confs on next poll but get skipped.
+              if (tx.status.confirmed && confirmations >= neededConfs) {
                 processedTxids.add(tx.txid);
               }
             }
