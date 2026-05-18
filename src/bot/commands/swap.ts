@@ -1919,26 +1919,37 @@ async function monitorReverseSwapAndForward(
   return new Promise<void>((resolve) => {
     let settled = false;
     let resolved = false;
-    const timeoutMs = 60 * 60_000; // 60 min max
+    const timeoutMs = 3 * 60 * 60_000; // 3 hours max
+    let timeoutCount = 0;
+    const maxTimeouts = 2; // re-subscribe once before abandoning
 
     const resolveOnce = () => {
       if (!resolved) {
         resolved = true;
-        clearTimeout(timeoutId);
+        if (currentTimeout) clearTimeout(currentTimeout);
         boltzWebSocket?.unsubscribe(boltzId);
         resolve();
       }
     };
 
-    const timeoutId = setTimeout(() => {
-      logger.warn('Reverse swap monitor TIMEOUT (WebSocket)', { swapId, boltzId });
-      notifyAdmins(
-        '⏰ *Reverse swap timeout*\n\n' +
-        `Swap: \`${swapId}\` | Boltz: \`${boltzId}\`\n` +
-        'No se detectó settlement en 60 min.',
-      );
-      resolveOnce();
-    }, timeoutMs);
+    let currentTimeout: ReturnType<typeof setTimeout> | undefined;
+    const startTimer = () => {
+      currentTimeout = setTimeout(() => {
+        timeoutCount++;
+        if (timeoutCount <= maxTimeouts && !settled) {
+          logger.warn('Reverse swap timeout — re-subscribing', { swapId, boltzId, timeoutCount });
+          notifyAdmins('⏰ *Reverse swap timeout #' + timeoutCount + '*\n\nSwap: `' + swapId + '` | Boltz: `' + boltzId + '`\nReintentando...');
+          boltzWebSocket?.unsubscribe(boltzId);
+          boltzWebSocket?.subscribe(boltzId, wsHandler as any);
+          startTimer();
+          return;
+        }
+        logger.warn('Reverse swap ABANDONED', { swapId, boltzId });
+        notifyAdmins('❌ *Reverse swap abandonado*\n\nSwap: `' + swapId + '` | Boltz: `' + boltzId + '`\nRequiere recuperación manual.');
+        resolveOnce();
+      }, timeoutMs);
+    };
+    startTimer();
 
     if (!boltzWebSocket) {
       logger.error('No WebSocket available for reverse swap monitoring', { swapId, boltzId });
@@ -1948,7 +1959,7 @@ async function monitorReverseSwapAndForward(
     }
 
     // --- Subscribe to WebSocket for Boltz swap status updates ---
-    boltzWebSocket.subscribe(boltzId, async (_id: string, status: BoltzSwapStatus) => {
+    const wsHandler = async (_id: string, status: BoltzSwapStatus) => {
       if (resolved) return;
       logger.debug('Reverse swap WS update', { boltzId, status });
 
@@ -2100,7 +2111,9 @@ async function monitorReverseSwapAndForward(
         resolveOnce();
         return;
       }
-    });
+    };
+
+    boltzWebSocket!.subscribe(boltzId, wsHandler);
   });
 }
 
