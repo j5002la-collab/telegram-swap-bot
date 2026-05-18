@@ -247,15 +247,20 @@ export async function sendToAddress(
       return null;
     }
 
-    // Estimate fee and determine actual send amount
-    // p2wpkh input: ~68 vB, output: ~31 vB (x2 if change), overhead: ~10 vB
-    const hasChangeOutput = totalInput > amountSats + 2000;
-    const estimatedSize = psbt.inputCount * 68 + (hasChangeOutput ? 2 : 1) * 31 + 10;
-    const fee = Math.max(estimatedSize * feeRate, psbt.inputCount * feeRate); // at least 1 sat/vB per input
+    // Fee estimate: try 1 output, recalc with 2 if change > dust
+    // p2wpkh input: ~68 vB, output: ~31 vB, overhead: ~10 vB
+    const estFee = (outs: number) => Math.max((psbt.inputCount * 68 + outs * 31 + 10) * feeRate, psbt.inputCount);
+    let fee = estFee(1);
+    let change = totalInput - amountSats - fee;
+    let actualSend = amountSats;
 
-    // If sending full balance, subtract fee from output; otherwise keep exact amount + change
-    const actualSend = hasChangeOutput ? amountSats : (totalInput - fee);
-    const change = totalInput - actualSend - fee;
+    if (change > 546) {
+      fee = estFee(2);
+      change = totalInput - amountSats - fee;
+      if (change <= 546) { actualSend = totalInput - fee; change = 0; }
+    } else {
+      actualSend = totalInput - fee; change = 0;
+    }
 
     if (actualSend <= 0) {
       logger.error('Send amount too small after fee', { totalInput, amountSats, fee });
@@ -266,7 +271,6 @@ export async function sendToAddress(
     psbt.addOutput({ address: toAddress, value: BigInt(actualSend) });
 
     if (change > 546) {
-      // Dust limit: 546 sats
       const { address: changeAddress } = bitcoin.payments.p2wpkh({
         pubkey: Buffer.from(keyPair.publicKey),
         network: bitcoin.networks.bitcoin,
