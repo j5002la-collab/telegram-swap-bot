@@ -184,14 +184,15 @@ async function getUtxos(): Promise<Utxo[]> {
 }
 
 /** Get fee rate from mempool.space, min 1 sat/vB */
-async function getFeeRate(satsPerVbyte = 1): Promise<number> {
+async function getFeeRate(satsPerVbyte = 2): Promise<number> {
   try {
     const { data } = await axios.get<{ fastestFee: number; halfHourFee: number; hourFee: number; economyFee: number }>(
       'https://mempool.space/api/v1/fees/recommended',
       { timeout: 5000 },
     );
-    // Use economy fee with 1 sat/vB minimum
-    return Math.max(data.economyFee || 1, 1);
+    // Use halfHourFee for reliable confirmation, floor 2 sat/vB
+    const rate = data.halfHourFee || data.economyFee || data.fastestFee || 2;
+    return Math.max(rate, 2);
   } catch {
     return satsPerVbyte;
   }

@@ -56,10 +56,11 @@ async function fetchUtxos(address: string): Promise<MempoolUtxo[]> {
 
 async function getFeeRate(fallback = 2): Promise<number> {
   try {
-    const { data } = await axios.get<{ economyFee: number }>(
+    const { data } = await axios.get<{ halfHourFee: number; economyFee: number; fastestFee: number }>(
       'https://mempool.space/api/v1/fees/recommended', { timeout: 5000 },
     );
-    return Math.max(data.economyFee || fallback, 1);
+    const rate = data.halfHourFee || data.economyFee || data.fastestFee || fallback;
+    return Math.max(rate, 2);
   } catch { return fallback; }
 }
 
