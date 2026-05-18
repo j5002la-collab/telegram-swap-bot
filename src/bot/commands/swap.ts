@@ -1952,25 +1952,20 @@ async function monitorReverseSwapAndForward(
       if (resolved) return;
       logger.debug('Reverse swap WS update', { boltzId, status });
 
-      // Forward non-terminal statuses to user message (if it's a new visible status)
-      const visibleStatuses = ['swap.created', 'invoice.set', 'transaction.mempool', 'transaction.confirmed',
-        'invoice.pending', 'invoice.paid', 'transaction.claim.pending'];
-      if (visibleStatuses.includes(status)) {
-        const labels: Record<string, string> = {
-          'swap.created': '⏳ Swap creado. Pagando invoice Lightning...',
-          'invoice.set': '📋 Pagando invoice...',
-          'transaction.mempool': '🔍 Transacción detectada en la red...',
-          'transaction.confirmed': '✅ Transacción confirmada. Procesando...',
-          'invoice.pending': '⚡ Pagando invoice Lightning...',
-          'invoice.paid': '💰 Invoice pagada. Completando swap...',
-          'transaction.claim.pending': '🔐 Finalizando swap...',
-        };
-        const label = labels[status] || ('Estado: ' + status);
+      // Only show progress updates for significant statuses.
+      // Early statuses like swap.created/invoice.set would overwrite invoice — skip them.
+      const progressStatuses: Record<string, string> = {
+        'invoice.paid': '💰 Invoice pagada. Completando swap...',
+        'transaction.claim.pending': '🔐 Finalizando swap...',
+        'transaction.mempool': '🔍 Transacción detectada en la red...',
+        'transaction.confirmed': '✅ Transacción confirmada. Procesando...',
+      };
+      if (progressStatuses[status]) {
         await botInstance!.telegram.editMessageText(chatId, messageId, undefined,
           '⚡ *Intercambio en curso*\n\n' +
           `Swap: \`${swapId}\`\n` +
           `Pagaste ${invoiceAmount.toLocaleString()} sats\n\n` +
-          label,
+          progressStatuses[status],
         ).catch(() => {});
         return;
       }
