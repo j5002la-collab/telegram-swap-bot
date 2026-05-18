@@ -5,7 +5,7 @@ import { logger } from '../utils/logger';
 import { userMiddleware } from './middleware/user';
 import { startCommand, handleStartCallback, showRates } from './commands/start';
 import { helpCommand } from './commands/help';
-import { swapCommand, handleSwapCurrency, handleSwapNetwork, handleSwapDestNetwork, handleSwapDirection, handleSwapAddress, handleSwapInvoice, handleSwapAmount, handleSwapConfirm, cancelCommand } from './commands/swap';
+import { swapCommand, handleSwapCurrency, handleSwapNetwork, handleSwapDestNetwork, handleSwapDirection, handleSwapAddress, handleSwapInvoice, handleSwapAmount, handleSwapConfirm, cancelCommand, checkPendingSwapsAtStartup } from './commands/swap';
 import { calcCommand, handleCalcText } from './commands/calc';
 import { raffleCommand, handleRaffleWinners } from './commands/raffle';
 import { adminCommand, handleAdminForceRaffle, handleBroadcastConfirm } from './commands/admin';
@@ -70,6 +70,11 @@ export function createBot(boltzWs?: BoltzWebSocket): Telegraf<Context> {
 
   // Store bot reference for async WebSocket updates
   setSwapState({ bot });
+
+  // Check for pending swaps that may have been interrupted by restart
+  checkPendingSwapsAtStartup().catch((err) => {
+    logger.error('Failed to check pending swaps at startup', { error: err });
+  });
 
   return bot;
 }

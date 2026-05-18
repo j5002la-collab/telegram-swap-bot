@@ -122,6 +122,43 @@ export async function cancelCommand(ctx: Context): Promise<void> {
 }
 
 // ============================================================
+// Startup check: alert admins about pending intermediary swaps
+// that may have been interrupted by a restart
+// ============================================================
+export async function checkPendingSwapsAtStartup(): Promise<void> {
+  try {
+    const pending = await Swap.find({
+      direction: 'ONCHAIN2LN',
+      status: 'pending',
+      boltzStatus: { $in: ['waiting_deposit', 'pending'] },
+    }).lean();
+
+    if (pending.length === 0) return;
+
+    logger.warn('Found pending swaps at startup — may need manual recovery', {
+      count: pending.length,
+      swaps: pending.map((s: any) => s.swapId),
+    });
+
+    if (botInstance && config.adminIds.length > 0) {
+      for (const swap of pending as any[]) {
+        await notifyAdmins(
+          '⚠️ *Swap pendiente detectado al iniciar*\n\n' +
+          `Swap: \`${swap.swapId}\`\n` +
+          `Dirección: ${swap.direction}\n` +
+          `Monto: ${swap.sourceAmount?.toLocaleString() || '?'} sats\n` +
+          `Estado DB: ${swap.status} / ${swap.boltzStatus}\n\n` +
+          'El bot se reinició mientras este swap estaba activo.\n' +
+          'Verificar si el depósito llegó y proceder manualmente.',
+        );
+      }
+    }
+  } catch (err) {
+    logger.error('Failed to check pending swaps', { error: err });
+  }
+}
+
+// ============================================================
 // Step 1: Currency
 // ============================================================
 export async function swapCommand(ctx: Context): Promise<void> {
