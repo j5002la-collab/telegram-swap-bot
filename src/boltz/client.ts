@@ -80,11 +80,33 @@ export class BoltzClient {
     return data;
   }
 
+  /** Retry helper with exponential backoff */
+  private async retry<T>(fn: () => Promise<T>, label: string, maxRetries = 2): Promise<T> {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (err: any) {
+        const isTimeout = err?.code === 'ETIMEDOUT' || err?.code === 'ECONNABORTED';
+        if (attempt < maxRetries && isTimeout) {
+          const delay = (attempt + 1) * 5000; // 5s, 10s
+          logger.warn(`Boltz ${label} timeout, retrying`, { attempt: attempt + 1, delayMs: delay });
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error('unreachable');
+  }
+
   // --- Submarine Swap ---
   // Pro mode has 1M sat minimum for submarine — disable it for user swaps
   async createSubmarineSwap(params: SubmarineSwapRequest): Promise<SubmarineSwapResponse> {
     logger.info('Creating submarine swap [regular]', { from: params.from, to: params.to });
-    const { data } = await this.http.post<SubmarineSwapResponse>('/swap/submarine', params);
+    const data = await this.retry(async () => {
+      const res = await this.http.post<SubmarineSwapResponse>('/swap/submarine', params);
+      return res.data;
+    }, 'submarine');
     logger.info('Submarine swap created', { swapId: data.id });
     return data;
   }

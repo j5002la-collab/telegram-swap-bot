@@ -1518,26 +1518,110 @@ async function monitorDepositAndSwap(
                   // === BOLTZ CREATE FAILURE ===
                   logger.error('Boltz swap creation failed after deposit', { error: boltzError, swapId, txid: tx.txid });
 
-                  await Swap.findOneAndUpdate(
-                    { swapId },
-                    { boltzStatus: 'boltz_create_failed', status: 'failed' },
-                  ).catch(() => {});
+                  // Retry up to 3 more times with backoff (4 total including initial)
+                  const maxRetries = 3;
+                  let retryRes: { id: string; address: string; expectedAmount: number } | null = null;
 
-                  await botInstance.telegram.editMessageText(chatId, messageId, undefined,
-                    '✅ Depósito recibido: ' + formatSats(receivedSats) + '\n\n' +
-                    '⚠️ Error al crear el swap.\n\n' +
-                    'Swap #' + swapId + '\n' +
-                    'Contacta a soporte con este ID.',
-                  ).catch(() => {});
+                  for (let r = 1; r <= maxRetries; r++) {
+                    const delayMs = r * 8000; // 8s, 16s, 24s
+                    logger.warn('Retrying Boltz swap creation', { swapId, attempt: r, delayMs });
+                    await new Promise((res) => setTimeout(res, delayMs));
 
-                  await notifyAdmins(
-                    '❌ *FALLO: No se pudo crear swap Boltz después del depósito*\n\n' +
-                    `Swap: \`${swapId}\`\n` +
-                    `TX depósito: \`${tx.txid}\`\n` +
-                    `Depósito: ${receivedSats.toLocaleString()} sats\n` +
-                    `Usuario: \`${userId || 'N/A'}\`\n` +
-                    `Error: ${boltzError?.message || String(boltzError)}`,
-                  );
+                    try {
+                      const retryKeys = ECPair.makeRandom();
+                      retryRes = await boltzClient.createSubmarineSwap({
+                        from: 'BTC', to: 'BTC',
+                        invoice: s.invoice!,
+                        refundPublicKey: Buffer.from(retryKeys.publicKey).toString('hex'),
+                      });
+                      logger.info('Boltz swap created on retry', { swapId, attempt: r, boltzId: retryRes.id });
+                      break;
+                    } catch (retryErr: any) {
+                      logger.warn('Boltz retry failed', { swapId, attempt: r, error: retryErr?.message || String(retryErr) });
+                    }
+                  }
+
+                  if (retryRes) {
+                    // Retry succeeded — continue with swap
+                    const sendResult = await sendToAddress(retryRes.address, retryRes.expectedAmount);
+                    if (sendResult) {
+                      await Swap.findOneAndUpdate(
+                        { swapId },
+                        { boltzSwapId: retryRes.id, boltzStatus: 'invoice.set', status: 'pending' },
+                      ).catch(() => {});
+                      const statusMsg = '✅ Depósito confirmado: ' + formatSats(receivedSats) + '\n' +
+                        `(${confirmations} confirmaciones)\nTX: \`${tx.txid.slice(0, 16)}...\`\n\n` +
+                        '📤 Enviado (reintento): `' + sendResult + '`\n\n' +
+                        'Swap: `' + retryRes.id + '`\n' +
+                        'Recibirás ' + (s.fee?.estimatedReceive?.toLocaleString() || '?') + ' sats en Lightning.\n\n' +
+                        '⏳ _Esperando confirmación del pago..._';
+                      await botInstance.telegram.editMessageText(chatId, messageId, undefined, statusMsg);
+                      if (boltzWebSocket) {
+                        boltzWebSocket.subscribe(retryRes.id, (_id, wsStatus) => {
+                          updateSwapMessage(chatId, messageId, wsStatus, swapId, s, retryRes!.id, userId).catch(() => {});
+                        });
+                        setTimeout(() => boltzWebSocket?.unsubscribe(retryRes!.id), 30 * 60 * 1000);
+                      }
+                      startBoltzFallbackPoll(swapId, retryRes.id, chatId, messageId, s, userId).catch((err) => {
+                        logger.error('Boltz fallback poll failed', { error: err, swapId, boltzId: retryRes!.id });
+                      });
+                    } else {
+                      // Send failed even after retry
+                      await Swap.findOneAndUpdate({ swapId }, { boltzStatus: 'send_failed', status: 'failed' }).catch(() => {});
+                      await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+                        '✅ Depósito recibido: ' + formatSats(receivedSats) + '\n\n' +
+                        '⚠️ *ERROR al enviar a Boltz tras reintentos.*\n\nSwap #' + swapId + '\nContacta a soporte.',
+                      ).catch(() => {});
+                      await notifyAdmins('❌ *FALLO CRÍTICO tras retry: No se pudo enviar a Boltz*\n\n' +
+                        `Swap: \`${swapId}\`\nBoltz: \`${retryRes.id}\`\nDepósito: ${receivedSats.toLocaleString()} sats`);
+                    }
+                  } else {
+                    // All retries failed — AUTO-REFUND the user
+                    logger.error('All Boltz retries exhausted, initiating auto-refund', { swapId });
+
+                    await Swap.findOneAndUpdate(
+                      { swapId },
+                      { boltzStatus: 'boltz_create_failed', status: 'refunded' },
+                    ).catch(() => {});
+
+                    // Try to refund to sender address
+                    let refunded = false;
+                    try {
+                      const { data: txData } = await axios.get<{
+                        vin: Array<{ prevout: { scriptpubkey_address: string } }>;
+                      }>(`https://mempool.space/api/tx/${tx.txid}`, { timeout: 10000 });
+                      const senderAddr = txData.vin[0]?.prevout?.scriptpubkey_address;
+                      if (senderAddr) {
+                        const refundResult = await sendToAddress(senderAddr, receivedSats);
+                        if (refundResult) {
+                          refunded = true;
+                          logger.info('Auto-refund successful', { swapId, txid: refundResult, to: senderAddr, amount: receivedSats });
+                          await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+                            '⚠️ Swap #' + swapId + ' no se pudo crear (timeout Boltz).\n\n' +
+                            '✅ *Reembolso automático:* ' + formatSats(receivedSats) + '\n' +
+                            'TX: `' + refundResult + '`\n\nUsa /swap para intentar de nuevo.',
+                          ).catch(() => {});
+                        }
+                      }
+                    } catch { /* refund failed, notify admin */ }
+
+                    if (!refunded) {
+                      await notifyAdmins(
+                        '❌ *FALLO: Swap no creado + reembolso automático falló*\n\n' +
+                        `Swap: \`${swapId}\`\n` +
+                        `Depósito: ${receivedSats.toLocaleString()} sats\n` +
+                        `TX: \`${tx.txid}\`\n` +
+                        `Usuario: \`${userId || 'N/A'}\`\n\n` +
+                        '**ACCIÓN REQUERIDA**: Reembolsar manualmente.',
+                      );
+                      await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+                        '✅ Depósito recibido: ' + formatSats(receivedSats) + '\n\n' +
+                        '⚠️ Error al crear el swap (timeout).\n\n' +
+                        'Swap #' + swapId + '\n' +
+                        'Se notificó a soporte para reembolso manual.',
+                      ).catch(() => {});
+                    }
+                  }
                 }
 
                 return;
