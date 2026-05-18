@@ -884,10 +884,15 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
           ? getPublicKeyHex()!
           : Buffer.from(ECPair.makeRandom().publicKey).toString('hex');
 
+        // walletReady → BTC goes to our wallet (config.btcAddress), we forward to user
+        // !walletReady → BTC goes directly to user's destination address
+        const swapDestAddress = walletReady ? getWalletAddress() : (s.destAddress || '');
+
         const res = await boltzClient.createReverseSwap({
           from: 'BTC', to: 'BTC', invoiceAmount: s.sourceAmount,
           claimPublicKey: claimPubKey,
           preimageHash: crypto.createHash('sha256').update(preimage).digest('hex'),
+          address: swapDestAddress,
         });
         swapServiceId = res.id;
 
@@ -895,7 +900,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
         const commissionAmount = s.fee?.commissionAmount || 0;
         const userReceives = (s.sourceAmount || 0) - commissionAmount;
 
-        // Save pending swap
+        // Save pending swap (with recovery data)
         await Swap.create({
           swapId, userId: userState?.userId || 'unknown',
           direction: s.direction,
@@ -907,6 +912,11 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
           commissionAmount: walletReady ? commissionAmount : 0,
           botProfit: walletReady ? commissionAmount : 0,
           preimage: preimageHex,
+          lockupAddress: res.lockupAddress,
+          swapTree: res.swapTree,
+          refundPublicKey: res.refundPublicKey,
+          timeoutBlockHeight: res.timeoutBlockHeight,
+          destAddress: s.destAddress,
           status: 'pending',
         });
 
