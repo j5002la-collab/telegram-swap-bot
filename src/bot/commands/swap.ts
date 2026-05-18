@@ -1857,8 +1857,8 @@ async function monitorDepositAndSwap(
 }
 
 // ============================================================
-// Fallback verification: confirm swap completed via DB + mempool
-// Boltz API v2 has NO REST status endpoint; rely on WebSocket → DB updates.
+// Fallback verification: check swap completion via DB + Boltz REST API
+// If WebSocket disconnects and DB shows no progress, query Boltz directly.
 // ============================================================
 async function startBoltzFallbackPoll(
   swapId: string, boltzId: string, chatId: number, messageId: number,
@@ -1867,42 +1867,78 @@ async function startBoltzFallbackPoll(
   // Wait 5 min before starting (let WebSocket handle normal completion)
   await new Promise((r) => setTimeout(r, 5 * 60_000));
 
-  logger.info('Boltz fallback started (DB-based)', { swapId, boltzId });
+  logger.info('Boltz fallback started', { swapId, boltzId });
   const maxPolls = 60; // 30 min at 30s intervals
 
   for (let i = 0; i < maxPolls; i++) {
     await new Promise((r) => setTimeout(r, 30_000));
 
     try {
-      // Check MongoDB — WebSocket handler updates swap status on terminal events
+      // Check MongoDB first — WebSocket handler updates on terminal events
       const dbSwap = await Swap.findOne({ swapId }).lean();
       const dbState = dbSwap?.status;
 
-      if (dbState === 'completed') {
-        logger.info('Boltz fallback: swap completed via WS', { swapId, boltzId });
+      if (dbState === 'completed' || dbState === 'failed' || dbState === 'refunded') {
+        logger.info('Boltz fallback: swap resolved in DB', { swapId, boltzId, dbState });
         return;
       }
 
-      if (dbState === 'failed') {
-        logger.info('Boltz fallback: swap failed', { swapId, boltzId });
-        return;
+      // Every 5th poll (~every 2.5 min), check Boltz REST API directly
+      if (i % 5 === 0) {
+        const status = await boltzClient.getSwapStatus(boltzId);
+        if (status && status !== 'unknown') {
+          logger.info('Boltz fallback: REST status', { swapId, boltzId, status });
+
+          const terminalOk = ['transaction.claimed', 'invoice.settled', 'invoice.paid'];
+          const terminalFail = ['transaction.failed', 'invoice.failedToPay', 'swap.expired', 'transaction.refunded', 'transaction.lockupFailed'];
+
+          if (terminalOk.includes(status)) {
+            // Swap completed but WS missed it — finalize in DB + notify user
+            await Swap.findOneAndUpdate({ swapId }, { boltzStatus: status, status: 'completed', completedAt: new Date() }).catch(() => {});
+            if (userId && userId !== 'unknown') {
+              User.findOneAndUpdate({ telegramId: userId }, { $inc: { swapsCount: 1, totalVolume: session.sourceAmount || 0 } }).catch(() => {});
+            }
+            if (session.fee) {
+              treasuryEngine.trackEarnings(session.fee.commissionAmount || 0).catch(() => {});
+              raffleEngine.trackSwapVolume(userId || 'unknown', session.sourceAmount || 0).catch(() => {});
+            }
+            if (botInstance) {
+              await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+                '🎉 *¡Swap completado!*\n\n' +
+                `Swap: \`${swapId}\`\n` +
+                `Boltz: \`${boltzId}\`\n` +
+                `Recibiste ${(session.fee?.estimatedReceive || 0).toLocaleString()} sats.\n\n` +
+                'Usa /swap para un nuevo intercambio.',
+              ).catch(() => {});
+            }
+            logger.info('Boltz fallback: swap completed via REST (WS missed)', { swapId, boltzId, status });
+            return;
+          }
+
+          if (terminalFail.includes(status)) {
+            await Swap.findOneAndUpdate({ swapId }, { boltzStatus: status, status: 'failed' }).catch(() => {});
+            await notifyAdmins('❌ *Swap falló (detectado por fallback)*\n\nSwap: `' + swapId + '`\nBoltz: `' + boltzId + '`\nEstado: ' + status);
+            if (botInstance) {
+              await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+                '❌ Swap no completado.\n\nSwap: `' + swapId + '`\nEstado: ' + status + '\nContacta a soporte.',
+              ).catch(() => {});
+            }
+            return;
+          }
+          // Non-terminal status (transaction.mempool, transaction.confirmed, etc.) — keep waiting
+        }
       }
 
-      if (dbState === 'refunded') {
-        logger.info('Boltz fallback: swap refunded', { swapId, boltzId });
-        return;
-      }
-
-      // Halfway through fallback (~20 min after swap creation)
+      // Halfway through fallback
       if (i === 30) {
         logger.warn('Boltz fallback: still pending after 20+ min', { swapId, boltzId, dbState });
       }
     } catch (err) {
-      logger.warn('Boltz fallback DB check error', { swapId, boltzId, error: String(err) });
+      logger.warn('Boltz fallback check error', { swapId, boltzId, error: String(err) });
     }
   }
 
-  // Full fallback window (~35 min) elapsed without terminal state
+  // Full fallback window elapsed
   logger.warn('Boltz fallback: swap not resolved after full window', { swapId, boltzId });
   await notifyAdmins(
     '⚠️ *Swap posiblemente atascado*\n\n' +
