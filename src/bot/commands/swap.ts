@@ -250,7 +250,7 @@ async function retrySwapWithNewInvoice(
         boltzWebSocket.subscribe(swapRes.id, (_id, wsStatus) => {
           updateSwapMessage(chatId, messageId, wsStatus, swapId, s, swapRes!.id, userId).catch(() => {});
         });
-        setTimeout(() => boltzWebSocket?.unsubscribe(swapRes!.id), 30 * 60 * 1000);
+        setTimeout(() => boltzWebSocket?.unsubscribe(swapRes!.id), 2 * 60 * 60 * 1000);
       }
       startBoltzFallbackPoll(swapId, swapRes.id, chatId, messageId, s, userId).catch(() => {});
     } else {
@@ -1175,7 +1175,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
               }
             }
           });
-          setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId), 35 * 60 * 1000);
+          setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId), 2 * 60 * 60 * 1000);
         }
       } else {
         if (!s.invoice) { await ctx.editMessageText('Falta la invoice. Usa /swap.'); clearSs(ctx); return; }
@@ -1263,7 +1263,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
               logger.debug('Swap: WS status update', { boltzId: swapServiceId, status });
               updateSwapMessage(wsChatId, wsMsgId, status, swapId, s, swapServiceId, userState?.userId).catch(() => {});
             });
-            setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId!), 30 * 60 * 1000);
+            setTimeout(() => boltzWebSocket?.unsubscribe(swapServiceId!), 2 * 60 * 60 * 1000);
           }
         }
       }
@@ -1667,7 +1667,7 @@ async function monitorDepositAndSwap(
                       boltzWebSocket.subscribe(res.id, (_id, status) => {
                         updateSwapMessage(chatId, messageId, status, swapId, s, res.id, userId).catch(() => {});
                       });
-                      setTimeout(() => boltzWebSocket?.unsubscribe(res.id), 30 * 60 * 1000);
+                      setTimeout(() => boltzWebSocket?.unsubscribe(res.id), 2 * 60 * 60 * 1000);
                     }
 
                     // === Fallback verification (DB-check, Boltz has no REST status endpoint) ===
@@ -1747,7 +1747,7 @@ async function monitorDepositAndSwap(
                         boltzWebSocket.subscribe(retryRes.id, (_id, wsStatus) => {
                           updateSwapMessage(chatId, messageId, wsStatus, swapId, s, retryRes!.id, userId).catch(() => {});
                         });
-                        setTimeout(() => boltzWebSocket?.unsubscribe(retryRes!.id), 30 * 60 * 1000);
+                        setTimeout(() => boltzWebSocket?.unsubscribe(retryRes!.id), 2 * 60 * 60 * 1000);
                       }
                       startBoltzFallbackPoll(swapId, retryRes.id, chatId, messageId, s, userId).catch((err) => {
                         logger.error('Boltz fallback poll failed', { error: err, swapId, boltzId: retryRes!.id });
