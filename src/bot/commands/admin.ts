@@ -7,6 +7,7 @@ import { forceRaffleDraw } from '../../jobs/raffle-draw';
 import { treasuryEngine } from '../../engine/treasury';
 import { boltzClient } from '../../boltz/client';
 import { Swap, User } from '../../models';
+import { recoverSwapByDbId, cooperativeRecover, recoverySummary } from '../../engine/recovery';
 
 function isAdmin(ctx: Context): boolean {
   return config.adminIds.includes(Number(ctx.from?.id));
@@ -352,6 +353,51 @@ async function adminCancelSwap(ctx: Context, swapId: string): Promise<void> {
 }
 
 // --- Dispatch ---
+// --- /admin stuck ---
+async function adminStuckSwaps(ctx: Context): Promise<void> {
+  try {
+    const summary = await recoverySummary();
+    if (summary.length === 0) {
+      await ctx.reply('No hay swaps atascados recuperables.');
+      return;
+    }
+    const lines = ['🔧 Swaps recuperables (' + summary.length + ')', ''];
+    for (const s of summary) {
+      lines.push((s.hasRecoveryData ? '✅' : '⚠️') + ' ' + s.swapId + ' → ' + s.boltzId);
+      lines.push('   ' + s.sourceAmount.toLocaleString() + ' sats | recovery: ' + (s.hasRecoveryData ? 'SI' : 'SOLO preimage'));
+      if (s.hasRecoveryData) lines.push('   /admin recover ' + s.swapId);
+    }
+    await ctx.reply(lines.join('\n'));
+  } catch (error) {
+    logger.error('Admin stuck error', { error });
+    await ctx.reply('Error.');
+  }
+}
+
+// --- /admin recover SWAP-ID ---
+async function adminRecoverSwap(ctx: Context, swapId: string): Promise<void> {
+  if (!swapId) { await ctx.reply('Uso: /admin recover SWAP-XXXXXXXXXXXX'); return; }
+
+  await ctx.reply('🔧 Intentando recuperar ' + swapId + '...');
+
+  const result = await recoverSwapByDbId(swapId);
+  if (result.success) {
+    await ctx.reply('✅ *Recuperado!*\n\nSwap: `' + swapId + '`\nTX: `' + (result.txid || '') + '`');
+    return;
+  }
+
+  logger.info('Full recovery failed, trying cooperative', { swapId, error: result.error });
+  await ctx.reply('⚠️ Recuperación completa falló: ' + (result.error || '') + '\n\nIntentando vía API de Boltz...');
+
+  const coopResult = await cooperativeRecover(swapId);
+  if (coopResult.success) {
+    await ctx.reply('✅ *Recuperado via Boltz!*\n\nSwap: `' + swapId + '`\nTX: `' + (coopResult.txid || 'claimed') + '`');
+    return;
+  }
+
+  await ctx.reply('❌ No se pudo recuperar.\n\nSwap: `' + swapId + '`\nError: ' + (coopResult.error || ''));
+}
+
 export async function adminCommand(ctx: Context): Promise<void> {
   if (!isAdmin(ctx)) { await unauthorized(ctx); return; }
 
@@ -364,6 +410,8 @@ export async function adminCommand(ctx: Context): Promise<void> {
     case 'swaps': case 'orders': await adminSwaps(ctx); break;
     case 'pending': await adminPending(ctx); break;
     case 'cancel': await adminCancelSwap(ctx, parts[2] || ''); break;
+    case 'recover': await adminRecoverSwap(ctx, parts[2] || ''); break;
+    case 'stuck': await adminStuckSwaps(ctx); break;
     case 'users': await adminUsers(ctx); break;
     case 'fee': await adminFee(ctx, parts); break;
     case 'raffle': await adminRaffle(ctx); break;
