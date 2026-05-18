@@ -91,6 +91,19 @@ function ss(ctx: Context): SwapSession | undefined { return sessions.get(String(
 function setSs(ctx: Context, s: SwapSession): void { sessions.set(String(ctx.from?.id), s); }
 function clearSs(ctx: Context): void { sessions.delete(String(ctx.from?.id)); }
 
+// Retry state: waiting for new invoice after Boltz routing failure
+interface InvoiceRetryState {
+  swapId: string;
+  receivedSats: number;
+  confirmations: number;
+  txid: string;
+  chatId: number;
+  messageId: number;
+  userId?: string;
+  session: SwapSession;
+}
+const invoiceRetries = new Map<string, InvoiceRetryState>();
+
 const SWAP_ERROR = 'Error al crear el intercambio. Intenta de nuevo en unos minutos con /swap.';
 
 /** Decode amount in sats from a BOLT11 Lightning invoice. Returns null if no amount. */
@@ -155,6 +168,119 @@ export async function checkPendingSwapsAtStartup(): Promise<void> {
     }
   } catch (err) {
     logger.error('Failed to check pending swaps', { error: err });
+  }
+}
+
+// ============================================================
+// Retry: cancel invoice retry → auto-refund
+// ============================================================
+export async function handleRetryInvoiceCancel(ctx: Context): Promise<void> {
+  if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
+  await ctx.answerCbQuery();
+  const swapId = ctx.callbackQuery.data.replace('retry_invoice_cancel_', '');
+  const rs = invoiceRetries.get(swapId);
+  if (!rs) { await ctx.editMessageText('Sesión expirada.').catch(() => {}); return; }
+  invoiceRetries.delete(swapId);
+  logger.info('Invoice retry cancelled — auto-refunding', { swapId });
+  await doAutoRefund(swapId, rs.receivedSats, rs.txid, rs.chatId, rs.messageId, rs.userId);
+}
+
+// ============================================================
+// Retry: process new invoice after Boltz routing failure
+// ============================================================
+async function retrySwapWithNewInvoice(
+  swapId: string, newInvoice: string, chatId: number, messageId: number,
+): Promise<void> {
+  const rs = invoiceRetries.get(swapId);
+  if (!rs) return;
+  const { receivedSats, txid, userId, session: s } = rs;
+
+  const invoiceAmount = decodeInvoiceAmount(newInvoice);
+  if (invoiceAmount && (invoiceAmount < s.sourceAmount! * 0.9 || invoiceAmount > s.sourceAmount! * 1.1)) {
+    await botInstance?.telegram.editMessageText(chatId, messageId, undefined,
+      '⚠️ El monto no coincide con tu depósito (' + (s.sourceAmount || 0).toLocaleString() + ' sats).\n\n' +
+      'Enviame una invoice del mismo monto o presiona Cancelar.',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('❌ Cancelar y reembolsar', 'retry_invoice_cancel_' + swapId)],
+      ]),
+    ).catch(() => {});
+    return;
+  }
+
+  s.invoice = newInvoice;
+  logger.info('Retrying swap with new invoice', { swapId });
+  await botInstance?.telegram.editMessageText(chatId, messageId, undefined,
+    '🔄 Reintentando con nueva invoice...\nDepósito: ' + formatSats(receivedSats),
+  ).catch(() => {});
+
+  let swapRes: { id: string; address: string; expectedAmount: number } | null = null;
+  for (let r = 1; r <= 2; r++) {
+    try {
+      const keys = ECPair.makeRandom();
+      swapRes = await boltzClient.createSubmarineSwap({
+        from: 'BTC', to: 'BTC', invoice: newInvoice,
+        refundPublicKey: Buffer.from(keys.publicKey).toString('hex'),
+      });
+      logger.info('Swap created with new invoice', { swapId, attempt: r, boltzId: swapRes.id });
+      break;
+    } catch (err: any) {
+      logger.warn('New invoice retry failed', { swapId, attempt: r, error: err?.message || String(err) });
+      if (r < 2) await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+
+  if (swapRes) {
+    invoiceRetries.delete(swapId);
+    const sendResult = await sendToAddress(swapRes.address, swapRes.expectedAmount);
+    if (sendResult) {
+      await Swap.findOneAndUpdate({ swapId }, { boltzSwapId: swapRes.id, boltzStatus: 'invoice.set', status: 'pending' }).catch(() => {});
+      await botInstance?.telegram.editMessageText(chatId, messageId, undefined,
+        '✅ Nueva invoice aceptada!\n\nSwap: `' + swapRes.id + '`\nRecibirás ' + (s.fee?.estimatedReceive?.toLocaleString() || '?') + ' sats.\n\n⏳ Esperando confirmación...',
+      ).catch(() => {});
+      if (boltzWebSocket) {
+        boltzWebSocket.subscribe(swapRes.id, (_id, wsStatus) => {
+          updateSwapMessage(chatId, messageId, wsStatus, swapId, s, swapRes!.id, userId).catch(() => {});
+        });
+        setTimeout(() => boltzWebSocket?.unsubscribe(swapRes!.id), 30 * 60 * 1000);
+      }
+      startBoltzFallbackPoll(swapId, swapRes.id, chatId, messageId, s, userId).catch(() => {});
+    } else {
+      invoiceRetries.delete(swapId);
+      await doAutoRefund(swapId, receivedSats, txid, chatId, messageId, userId);
+    }
+  } else {
+    invoiceRetries.delete(swapId);
+    await doAutoRefund(swapId, receivedSats, txid, chatId, messageId, userId);
+  }
+}
+
+async function doAutoRefund(
+  swapId: string, amountSats: number, txid: string,
+  chatId: number, messageId: number, userId?: string,
+): Promise<void> {
+  await Swap.findOneAndUpdate({ swapId }, { status: 'refunded', boltzStatus: 'auto_refunded' }).catch(() => {});
+  let refunded = false;
+  try {
+    const { data: txData } = await axios.get<{
+      vin: Array<{ prevout: { scriptpubkey_address: string } }>;
+    }>(`https://mempool.space/api/tx/${txid}`, { timeout: 10000 });
+    const senderAddr = txData.vin[0]?.prevout?.scriptpubkey_address;
+    if (senderAddr) {
+      const refundResult = await sendToAddress(senderAddr, amountSats);
+      if (refundResult) {
+        refunded = true;
+        await botInstance?.telegram.editMessageText(chatId, messageId, undefined,
+          '⚠️ Swap no se pudo crear.\n\n✅ *Reembolso:* ' + formatSats(amountSats) + '\n' +
+          'TX: `' + refundResult + '`\n\nUsa /swap para intentar de nuevo.',
+        ).catch(() => {});
+      }
+    }
+  } catch { /* fall through */ }
+  if (!refunded) {
+    await notifyAdmins('❌ *Auto-refund falló*\n\nSwap: `' + swapId + '`\nDepósito: ' + amountSats.toLocaleString() + ' sats');
+    await botInstance?.telegram.editMessageText(chatId, messageId, undefined,
+      '⚠️ Error al crear swap. Contacta a soporte.\n\nSwap #' + swapId,
+    ).catch(() => {});
   }
 }
 
@@ -415,8 +541,22 @@ export async function handleSwapDirection(ctx: Context): Promise<void> {
 // ============================================================
 export async function handleSwapInvoice(ctx: Context, next: () => Promise<void>): Promise<void> {
   if (!ctx.message || !('text' in ctx.message)) return next();
-  const s = ss(ctx);
   const raw = ctx.message.text.trim();
+
+  // === RETRY MODE: user is sending a new invoice after Boltz routing failure ===
+  if (raw.startsWith('lnbc')) {
+    const userId = String(ctx.from?.id);
+    // Find if this user has any pending invoice retry
+    for (const [swapId, rs] of invoiceRetries) {
+      if (rs.userId === userId && rs.chatId === ctx.chat?.id) {
+        logger.info('Invoice retry: received new invoice', { swapId, userId });
+        await retrySwapWithNewInvoice(swapId, raw, rs.chatId, rs.messageId);
+        return;
+      }
+    }
+  }
+
+  const s = ss(ctx);
   logger.debug('📥 handleSwapInvoice fired', { step: s?.step, isInvoice: raw.startsWith('ln'), userId: ctx.from?.id });
   if (!s || s.step !== 'invoice') {
     if (raw.startsWith('lnbc') && s) {
@@ -1613,51 +1753,55 @@ async function monitorDepositAndSwap(
                         `Swap: \`${swapId}\`\nBoltz: \`${retryRes.id}\`\nDepósito: ${receivedSats.toLocaleString()} sats`);
                     }
                   } else {
-                    // All retries failed — AUTO-REFUND the user
-                    logger.error('All Boltz retries exhausted, initiating auto-refund', { swapId });
+                    // All retries failed — ask user for a new invoice before auto-refund
+                    logger.warn('All Boltz retries exhausted, asking for new invoice', { swapId });
 
                     await Swap.findOneAndUpdate(
                       { swapId },
-                      { boltzStatus: 'boltz_create_failed', status: 'refunded' },
+                      { boltzStatus: 'awaiting_invoice', status: 'pending' },
                     ).catch(() => {});
 
-                    // Try to refund to sender address
-                    let refunded = false;
-                    try {
-                      const { data: txData } = await axios.get<{
-                        vin: Array<{ prevout: { scriptpubkey_address: string } }>;
-                      }>(`https://mempool.space/api/tx/${tx.txid}`, { timeout: 10000 });
-                      const senderAddr = txData.vin[0]?.prevout?.scriptpubkey_address;
-                      if (senderAddr) {
-                        const refundResult = await sendToAddress(senderAddr, receivedSats);
-                        if (refundResult) {
-                          refunded = true;
-                          logger.info('Auto-refund successful', { swapId, txid: refundResult, to: senderAddr, amount: receivedSats });
-                          await botInstance.telegram.editMessageText(chatId, messageId, undefined,
-                            '⚠️ Swap #' + swapId + ' no se pudo crear (timeout Boltz).\n\n' +
-                            '✅ *Reembolso automático:* ' + formatSats(receivedSats) + '\n' +
-                            'TX: `' + refundResult + '`\n\nUsa /swap para intentar de nuevo.',
-                          ).catch(() => {});
-                        }
-                      }
-                    } catch { /* refund failed, notify admin */ }
+                    // Store retry context so the next invoice from this user triggers retry
+                    invoiceRetries.set(swapId, {
+                      swapId, receivedSats, confirmations,
+                      txid: tx.txid, chatId, messageId,
+                      userId, session: s,
+                    });
 
-                    if (!refunded) {
-                      await notifyAdmins(
-                        '❌ *FALLO: Swap no creado + reembolso automático falló*\n\n' +
-                        `Swap: \`${swapId}\`\n` +
-                        `Depósito: ${receivedSats.toLocaleString()} sats\n` +
-                        `TX: \`${tx.txid}\`\n` +
-                        `Usuario: \`${userId || 'N/A'}\`\n\n` +
-                        '**ACCIÓN REQUERIDA**: Reembolsar manualmente.',
-                      );
+                    // Send message asking for new invoice
+                    try {
                       await botInstance.telegram.editMessageText(chatId, messageId, undefined,
-                        '✅ Depósito recibido: ' + formatSats(receivedSats) + '\n\n' +
-                        '⚠️ Error al crear el swap (timeout).\n\n' +
-                        'Swap #' + swapId + '\n' +
-                        'Se notificó a soporte para reembolso manual.',
-                      ).catch(() => {});
+                        '⚠️ Tu invoice no pudo ser ruteada por Boltz.\n\n' +
+                        'Depósito confirmado: ' + formatSats(receivedSats) + '\n\n' +
+                        '📋 *Enviame otra invoice Lightning* para reintentar\n' +
+                        'o presiona Cancelar para reembolso.',
+                        Markup.inlineKeyboard([
+                          [Markup.button.callback('❌ Cancelar y reembolsar', 'retry_invoice_cancel_' + swapId)],
+                        ]),
+                      );
+                    } catch {
+                      // If edit fails, send new message
+                      const newMsg = await botInstance.telegram.sendMessage(chatId,
+                        '⚠️ Tu invoice no pudo ser ruteada por Boltz.\n\n' +
+                        'Depósito confirmado: ' + formatSats(receivedSats) + '\n\n' +
+                        '📋 *Enviame otra invoice Lightning* para reintentar\n' +
+                        'o presiona Cancelar para reembolso.',
+                        Markup.inlineKeyboard([
+                          [Markup.button.callback('❌ Cancelar y reembolsar', 'retry_invoice_cancel_' + swapId)],
+                        ]),
+                      );
+                      // Update messageId for future edits
+                      if (newMsg.message_id) {
+                        invoiceRetries.get(swapId)!.messageId = newMsg.message_id;
+                      }
                     }
+
+                    await notifyAdmins(
+                      '⚠️ *Invoice no ruteable — esperando nueva*\n\n' +
+                      `Swap: \`${swapId}\`\n` +
+                      `Depósito: ${receivedSats.toLocaleString()} sats\n` +
+                      `Usuario: \`${userId || 'N/A'}\``,
+                    );
                   }
                 }
 

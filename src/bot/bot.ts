@@ -5,7 +5,7 @@ import { logger } from '../utils/logger';
 import { userMiddleware } from './middleware/user';
 import { startCommand, handleStartCallback, showRates } from './commands/start';
 import { helpCommand } from './commands/help';
-import { swapCommand, handleSwapCurrency, handleSwapNetwork, handleSwapDestNetwork, handleSwapDirection, handleSwapAddress, handleSwapInvoice, handleSwapAmount, handleSwapConfirm, cancelCommand, checkPendingSwapsAtStartup } from './commands/swap';
+import { swapCommand, handleSwapCurrency, handleSwapNetwork, handleSwapDestNetwork, handleSwapDirection, handleSwapAddress, handleSwapInvoice, handleSwapAmount, handleSwapConfirm, cancelCommand, handleRetryInvoiceCancel, checkPendingSwapsAtStartup } from './commands/swap';
 import { calcCommand, handleCalcText } from './commands/calc';
 import { raffleCommand, handleRaffleWinners } from './commands/raffle';
 import { adminCommand, handleAdminForceRaffle, handleBroadcastConfirm } from './commands/admin';
@@ -40,6 +40,7 @@ export function createBot(boltzWs?: BoltzWebSocket): Telegraf<Context> {
   bot.action(/^swap_destnet_/, handleSwapDestNetwork);
   bot.action(/^swap_dir_/, handleSwapDirection);
   bot.action(/^swap_confirm$|^swap_cancel$/, handleSwapConfirm);
+  bot.action(/^retry_invoice_cancel_/, handleRetryInvoiceCancel);
   bot.action('raffle_winners', handleRaffleWinners);
   bot.action('admin_force_raffle', handleAdminForceRaffle);
   bot.action('show_rates', (ctx) => { ctx.answerCbQuery(); return showRates(ctx); });
