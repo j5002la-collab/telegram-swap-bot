@@ -40,6 +40,11 @@ function minConfirmations(amountSats: number): number {
   return 3;
 }
 
+/** Escape Telegram legacy Markdown special chars */
+function escapeMd(text: string): string {
+  return text.replace(/([_*[\]()~`>#+\-=|{}.!])/g, '\\$1');
+}
+
 /** Notify all configured admin IDs via Telegram */
 async function notifyAdmins(message: string): Promise<void> {
   if (!botInstance || config.adminIds.length === 0) return;
@@ -48,7 +53,11 @@ async function notifyAdmins(message: string): Promise<void> {
     try {
       await botInstance.telegram.sendMessage(adminId, '🚨 *SwapBot Alert*\n\n' + message, { parse_mode: 'Markdown' });
     } catch (err) {
-      logger.error('Failed to notify admin', { adminId, error: String(err) });
+      // Retry without Markdown if parse fails
+      try {
+        const plain = '🚨 SwapBot Alert\n\n' + message.replace(/[*`_\[\]]/g, '');
+        await botInstance.telegram.sendMessage(adminId, plain);
+      } catch { /* give up */ }
     }
   }
 }
@@ -2160,9 +2169,16 @@ async function updateSwapMessage(
     await botInstance.telegram.editMessageText(chatId, messageId, undefined, text);
 
     if (status === 'transaction.claimed' || status === 'invoice.settled') {
-      // Add final message below the status
-      await botInstance.telegram.sendMessage(chatId,
-        '🎉 Swap completado!\n\nUsa /swap para un nuevo intercambio.',
+      const sent = (session.sourceAmount || 0).toLocaleString();
+      const received = (session.fee?.estimatedReceive || 0).toLocaleString();
+      // Update the status message with completion
+      await botInstance.telegram.editMessageText(chatId, messageId, undefined,
+        '🎉 *¡Swap completado!*\n\n' +
+        `Enviaste:  ${sent} sats\n` +
+        `Recibiste: ${received} sats\n` +
+        `Swap: \`${swapId}\`\n` +
+        `Boltz: \`${swapServiceId}\`\n\n` +
+        'Usa /swap para un nuevo intercambio.',
       ).catch(() => {});
       // Update the pending swap record (created at swap initiation)
       await Swap.findOneAndUpdate(

@@ -15,9 +15,10 @@ export async function startCommand(ctx: Context): Promise<void> {
   const username = userState?.username || firstName;
   const rate = commissionEngine.getCommissionRate();
 
-  const welcomeMessage = 'SwapBot — Cambios instantáneos BTC/Lightning\n\n' +
-    'Comisión: ' + rate + '% (configurable 1.5%-2.5%)\n' +
-    'Sorteo semanal: 0.1% del volumen\n\n' +
+  const welcomeMessage = '🤖 *SwapBot v2*\n\n' +
+    'Cambios instantáneos BTC ↔ Lightning\n' +
+    'No custodia · Sin registro · Sin KYC\n\n' +
+    `Comisión: ${rate}% | Sorteo semanal: 0.1%\n\n` +
     'Selecciona una opción:';
 
   await ctx.reply(welcomeMessage, MAIN_MENU_KEYBOARD);
