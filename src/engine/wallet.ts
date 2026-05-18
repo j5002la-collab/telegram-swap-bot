@@ -183,15 +183,15 @@ async function getUtxos(): Promise<Utxo[]> {
     }));
 }
 
-/** Get fee rate from mempool.space */
-async function getFeeRate(satsPerVbyte = 5): Promise<number> {
+/** Get fee rate from mempool.space, min 1 sat/vB */
+async function getFeeRate(satsPerVbyte = 1): Promise<number> {
   try {
     const { data } = await axios.get<{ fastestFee: number; halfHourFee: number; hourFee: number; economyFee: number }>(
       'https://mempool.space/api/v1/fees/recommended',
       { timeout: 5000 },
     );
-    // Use economy fee unless it's very low
-    return Math.max(data.economyFee || 1, satsPerVbyte);
+    // Use economy fee with 1 sat/vB minimum
+    return Math.max(data.economyFee || 1, 1);
   } catch {
     return satsPerVbyte;
   }
@@ -247,15 +247,23 @@ export async function sendToAddress(
       return null;
     }
 
-    // Add output to destination
-    logger.debug('sendToAddress: adding output', { to: toAddress, amount: amountSats });
-    psbt.addOutput({ address: toAddress, value: BigInt(amountSats) });
+    // Estimate fee and determine actual send amount
+    // p2wpkh input: ~68 vB, output: ~31 vB (x2 if change), overhead: ~10 vB
+    const hasChangeOutput = totalInput > amountSats + 2000;
+    const estimatedSize = psbt.inputCount * 68 + (hasChangeOutput ? 2 : 1) * 31 + 10;
+    const fee = Math.max(estimatedSize * feeRate, psbt.inputCount * feeRate); // at least 1 sat/vB per input
 
-    // Estimate fee and add change output
-    // p2wpkh input: ~68 vB, output: ~31 vB, overhead: ~10 vB
-    const estimatedSize = psbt.inputCount * 68 + (psbt.txOutputs.length + 1) * 31 + 10;
-    const fee = estimatedSize * feeRate;
-    const change = totalInput - amountSats - fee;
+    // If sending full balance, subtract fee from output; otherwise keep exact amount + change
+    const actualSend = hasChangeOutput ? amountSats : (totalInput - fee);
+    const change = totalInput - actualSend - fee;
+
+    if (actualSend <= 0) {
+      logger.error('Send amount too small after fee', { totalInput, amountSats, fee });
+      return null;
+    }
+
+    logger.debug('sendToAddress: adding output', { to: toAddress, amount: actualSend });
+    psbt.addOutput({ address: toAddress, value: BigInt(actualSend) });
 
     if (change > 546) {
       // Dust limit: 546 sats
@@ -268,7 +276,7 @@ export async function sendToAddress(
       }
     }
 
-    logger.info('Transaction details', { inputs: psbt.inputCount, amount: amountSats, fee, change });
+    logger.info('Transaction details', { inputs: psbt.inputCount, amount: actualSend, fee, change });
 
     // Sign all inputs
     logger.debug('sendToAddress: signing inputs', { count: psbt.inputCount });

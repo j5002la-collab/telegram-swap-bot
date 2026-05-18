@@ -142,15 +142,15 @@ export async function checkPendingSwapsAtStartup(): Promise<void> {
 
     if (botInstance && config.adminIds.length > 0) {
       for (const swap of pending as any[]) {
-        await notifyAdmins(
-          '⚠️ *Swap pendiente detectado al iniciar*\n\n' +
+        const statusValues = [swap.status, swap.boltzStatus].map((v: string) => (v || '').replace(/_/g, '\\_'));
+        const msg = '⚠️ *Swap pendiente detectado al iniciar*\n\n' +
           `Swap: \`${swap.swapId}\`\n` +
           `Dirección: ${swap.direction}\n` +
           `Monto: ${swap.sourceAmount?.toLocaleString() || '?'} sats\n` +
-          `Estado DB: ${swap.status} / ${swap.boltzStatus}\n\n` +
+          `Estado DB: ${statusValues[0]} / ${statusValues[1]}\n\n` +
           'El bot se reinició mientras este swap estaba activo.\n' +
-          'Verificar si el depósito llegó y proceder manualmente.',
-        );
+          'Verificar si el depósito llegó y proceder manualmente.';
+        await notifyAdmins(msg);
       }
     }
   } catch (err) {
