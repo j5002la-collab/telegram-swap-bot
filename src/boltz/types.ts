@@ -76,6 +76,8 @@ export interface ReverseSwapRequest {
   claimPublicKey: string;
   /** SHA256 hash of preimage */
   preimageHash: string;
+  /** Address where Boltz should send the on-chain BTC after settlement */
+  address?: string;
   pairHash?: string;
 }
 

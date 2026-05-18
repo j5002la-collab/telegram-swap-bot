@@ -112,11 +112,14 @@ export class BoltzClient {
     return data;
   }
 
-  /** Get swap status by ID (fallback polling — Boltz v2 has no REST status endpoint, rely on WebSocket) */
-  async getSwapStatus(_swapId: string): Promise<string> {
-    // Boltz API v2 does NOT expose swap status via REST — only via WebSocket.
-    // Return 'unknown' to avoid spamming 404 errors.
-    return 'unknown';
+  /** Get swap status by ID via REST (GET /v2/swap/:id) */
+  async getSwapStatus(swapId: string): Promise<string> {
+    try {
+      const { data } = await this.http.get(`/swap/${swapId}`);
+      return data.status || 'unknown';
+    } catch {
+      return 'unknown';
+    }
   }
 
   async sendSubmarineSwapClaimSignature(swapId: string, params: { pubNonce: string; partialSignature: string }) {
