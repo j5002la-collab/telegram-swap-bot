@@ -1260,7 +1260,8 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
       }
 
       clearSs(ctx);
-      await ctx.reply('Usa /swap para un nuevo intercambio.');
+      // Do NOT send 'Usa /swap' here — swap is still in progress.
+      // Completion messages are sent by updateSwapMessage / monitorReverseSwapAndForward.
 
     } catch (error) {
       logger.error('Swap creation failed', { error, swapId });
@@ -2159,6 +2160,10 @@ async function updateSwapMessage(
     await botInstance.telegram.editMessageText(chatId, messageId, undefined, text);
 
     if (status === 'transaction.claimed' || status === 'invoice.settled') {
+      // Add final message below the status
+      await botInstance.telegram.sendMessage(chatId,
+        '🎉 Swap completado!\n\nUsa /swap para un nuevo intercambio.',
+      ).catch(() => {});
       // Update the pending swap record (created at swap initiation)
       await Swap.findOneAndUpdate(
         { swapId },

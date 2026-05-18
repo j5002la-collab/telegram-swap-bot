@@ -302,6 +302,55 @@ async function adminPro(ctx: Context, args: string[]): Promise<void> {
   }
 }
 
+// --- /admin pending ---
+async function adminPending(ctx: Context): Promise<void> {
+  try {
+    const pending = await Swap.find({ status: 'pending' }).sort({ createdAt: -1 }).limit(15).lean();
+    if (pending.length === 0) {
+      await ctx.reply('No hay swaps pendientes.');
+      return;
+    }
+    const lines = ['⏳ Swaps pendientes (' + pending.length + ')', ''];
+    for (const s of pending as any[]) {
+      const age = Math.round((Date.now() - new Date(s.createdAt).getTime()) / 3600000);
+      const emoji = s.direction === 'LN2ONCHAIN' ? '⚡' : '🔗';
+      lines.push(`${emoji} ${s.swapId} ${s.direction} ${s.sourceAmount?.toLocaleString() || '?'} sats`);
+      lines.push(`   Estado: ${s.boltzStatus || 'pending'} | ${age}h`);
+      lines.push(`   /admin cancel ${s.swapId}`);
+    }
+    await ctx.reply(lines.join('\n'));
+  } catch (error) {
+    logger.error('Admin pending error', { error });
+    await ctx.reply('Error.');
+  }
+}
+
+// --- /admin cancel SWAP-ID ---
+async function adminCancelSwap(ctx: Context, swapId: string): Promise<void> {
+  try {
+    const swap = await Swap.findOne({ swapId });
+    if (!swap) { await ctx.reply('Swap no encontrado: ' + swapId); return; }
+    if (swap.status !== 'pending') { await ctx.reply('El swap ya está en estado: ' + swap.status); return; }
+
+    await Swap.findOneAndUpdate({ swapId }, { status: 'failed', boltzStatus: 'admin_cancelled' });
+
+    // Try auto-refund if we have deposit info
+    const senderTx = swap.boltzSwapId; // might have tx info
+    await ctx.reply(
+      'Swap cancelado: `' + swapId + '`\n' +
+      'Dirección: ' + swap.direction + '\n' +
+      'Monto: ' + (swap.sourceAmount?.toLocaleString() || '?') + ' sats\n' +
+      'Estado anterior: ' + swap.boltzStatus + '\n\n' +
+      '⚠️ Verificar si se necesita reembolso manual.',
+    );
+
+    logger.warn('Admin cancelled swap', { swapId, adminId: ctx.from?.id });
+  } catch (error) {
+    logger.error('Admin cancel swap error', { error });
+    await ctx.reply('Error al cancelar swap.');
+  }
+}
+
 // --- Dispatch ---
 export async function adminCommand(ctx: Context): Promise<void> {
   if (!isAdmin(ctx)) { await unauthorized(ctx); return; }
@@ -313,6 +362,8 @@ export async function adminCommand(ctx: Context): Promise<void> {
   switch (sub) {
     case 'volume': await adminVolume(ctx); break;
     case 'swaps': case 'orders': await adminSwaps(ctx); break;
+    case 'pending': await adminPending(ctx); break;
+    case 'cancel': await adminCancelSwap(ctx, parts[2] || ''); break;
     case 'users': await adminUsers(ctx); break;
     case 'fee': await adminFee(ctx, parts); break;
     case 'raffle': await adminRaffle(ctx); break;
@@ -325,11 +376,13 @@ export async function adminCommand(ctx: Context): Promise<void> {
         'Admin Panel\n\n' +
         '/admin volume — Estadisticas\n' +
         '/admin swaps — Ultimos swaps\n' +
+        '/admin pending — Swaps pendientes\n' +
+        '/admin cancel SWAP-ID — Cancelar swap\n' +
         '/admin users — Usuarios\n' +
         '/admin fee 1.8 — Cambiar comisión (1.5-2.5)\n' +
         '/admin raffle — Sorteo\n' +
-        '/admin treasury — Balance ganancias\n' +
-        '/admin withdraw <sats> — Marcar retiro\n' +
+        '/admin treasury — Balance\n' +
+        '/admin withdraw <sats> — Retiro\n' +
         '/admin pro on|off|status — Pro Mode\n' +
         '/admin broadcast — Enviar a todos',
       );

@@ -3,6 +3,7 @@ import { logger } from './utils/logger';
 import { connectDatabase } from './models';
 import { createBot, launchBot } from './bot/bot';
 import { startRaffleScheduler } from './jobs/raffle-draw';
+import { startCleanupScheduler } from './jobs/cleanup';
 import { treasuryEngine } from './engine/treasury';
 import { boltzClient } from './boltz/client';
 import { initCNClient } from './changenow/client';
@@ -41,6 +42,9 @@ async function main(): Promise<void> {
 
     // Start raffle scheduler (Sundays 23:59 UTC)
     startRaffleScheduler();
+
+    // Start auto-cleanup for old stuck swaps
+    startCleanupScheduler();
 
     // Enable Boltz Pro if configured (default: on)
     if (config.boltzProEnabled) {
