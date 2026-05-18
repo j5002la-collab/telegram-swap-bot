@@ -34,8 +34,18 @@ export interface ISwap extends Document {
   commissionAmount: number;
   /** Bot net profit in smallest unit */
   botProfit: number;
-  /** Preimage hex for reverse swaps (needed for refund recovery) */
+  /** Preimage hex for reverse swaps (needed for claim/recovery) */
   preimage?: string;
+  /** Boltz lockup address (taproot) where BTC is locked */
+  lockupAddress?: string;
+  /** Serialized swap tree from Boltz (needed for claim/recovery) */
+  swapTree?: object;
+  /** Boltz refund public key (needed for recovery) */
+  refundPublicKey?: string;
+  /** Timeout block height for refund path */
+  timeoutBlockHeight?: number;
+  /** User's destination BTC address */
+  destAddress?: string;
   status: SwapStatus;
   createdAt: Date;
   completedAt?: Date;
@@ -113,6 +123,21 @@ const swapSchema = new Schema<ISwap>(
       validate: Number.isInteger,
     },
     preimage: {
+      type: String,
+    },
+    lockupAddress: {
+      type: String,
+    },
+    swapTree: {
+      type: Schema.Types.Mixed,
+    },
+    refundPublicKey: {
+      type: String,
+    },
+    timeoutBlockHeight: {
+      type: Number,
+    },
+    destAddress: {
       type: String,
     },
     status: {

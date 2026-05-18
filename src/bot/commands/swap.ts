@@ -900,7 +900,7 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
         const commissionAmount = s.fee?.commissionAmount || 0;
         const userReceives = (s.sourceAmount || 0) - commissionAmount;
 
-        // Save pending swap
+        // Save pending swap (with recovery data)
         await Swap.create({
           swapId, userId: userState?.userId || 'unknown',
           direction: s.direction,
@@ -912,6 +912,11 @@ export async function handleSwapConfirm(ctx: Context): Promise<void> {
           commissionAmount: walletReady ? commissionAmount : 0,
           botProfit: walletReady ? commissionAmount : 0,
           preimage: preimageHex,
+          lockupAddress: res.lockupAddress,
+          swapTree: res.swapTree,
+          refundPublicKey: res.refundPublicKey,
+          timeoutBlockHeight: res.timeoutBlockHeight,
+          destAddress: s.destAddress,
           status: 'pending',
         });
 
