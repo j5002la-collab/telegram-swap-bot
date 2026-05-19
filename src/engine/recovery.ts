@@ -145,6 +145,7 @@ async function recoverSwap(s: any): Promise<RecoveryResult> {
       timeoutBlockHeight: s.timeoutBlockHeight,
       destAddress: s.destAddress,
       privateKeyWif: config.btcPrivateKeyWif,
+      savedSwapTree: s.swapTree, // Use exact tree from Boltz, not reconstructed
     });
 
     logger.info('Recovery: broadcasting', { swapId: s.swapId });
@@ -171,6 +172,8 @@ interface BuildClaimParams {
   timeoutBlockHeight: number;
   destAddress: string;
   privateKeyWif: string;
+  /** Use this saved swapTree from DB instead of reconstructing */
+  savedSwapTree?: any;
 }
 
 async function buildClaimTx(p: BuildClaimParams): Promise<string> {
@@ -180,14 +183,22 @@ async function buildClaimTx(p: BuildClaimParams): Promise<string> {
   );
   const refundPubKey = hexDecode(p.refundPublicKeyHex);
 
-  // 2. Reconstruct swap tree (all Uint8Array args)
-  const swapTree = reverseSwapTree(
-    false,
-    preimageHash,
-    p.claimPublicKeyBytes,
-    refundPubKey,
-    p.timeoutBlockHeight,
-  );
+  // 2. Use saved swap tree from DB (exact tree Boltz returned), or reconstruct
+  let swapTree: any;
+  if (p.savedSwapTree) {
+    // DB stores hex strings — convert to Uint8Array for boltz-core
+    const claimLf = { version: p.savedSwapTree.claimLeaf?.version ?? 192, output: hexDecode(p.savedSwapTree.claimLeaf?.output || '') };
+    const refundLf = { version: p.savedSwapTree.refundLeaf?.version ?? 192, output: hexDecode(p.savedSwapTree.refundLeaf?.output || '') };
+    swapTree = {
+      claimLeaf: claimLf,
+      refundLeaf: refundLf,
+      tree: TaprootUtils.swapLeafsToTree(claimLf, refundLf),
+    };
+  } else {
+    swapTree = reverseSwapTree(
+      false, preimageHash, p.claimPublicKeyBytes, refundPubKey, p.timeoutBlockHeight,
+    );
+  }
 
   logger.info('Recovery: swap tree done', {
     tree: typeof swapTree.tree, claimLeafVer: (swapTree as any).claimLeaf?.version,
