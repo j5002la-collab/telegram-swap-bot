@@ -65,10 +65,17 @@ async function getFeeRate(fallback = 2): Promise<number> {
 }
 
 async function broadcastTx(txHex: string): Promise<string> {
-  const { data } = await axios.post<string>('https://mempool.space/api/tx', txHex, {
-    headers: { 'Content-Type': 'text/plain' }, timeout: 15000,
-  });
-  return data;
+  try {
+    const { data } = await axios.post<string>('https://mempool.space/api/tx', txHex, {
+      headers: { 'Content-Type': 'text/plain' }, timeout: 15000,
+    });
+    return data;
+  } catch (err: any) {
+    const body = err?.response?.data;
+    const msg = typeof body === 'string' ? body : JSON.stringify(body).slice(0, 300);
+    logger.error('Broadcast failed', { status: err?.response?.status, body: msg, hexLen: txHex.length });
+    throw new Error(msg || err?.message || 'broadcast failed');
+  }
 }
 
 async function getOutputScript(txid: string, vout: number): Promise<Uint8Array> {
@@ -230,7 +237,7 @@ async function buildClaimTx(p: BuildClaimParams): Promise<string> {
 
   // 7. Build + sign claim tx
   const tx = constructClaimTransaction(
-    claimDetails, destScript, fee, true, p.timeoutBlockHeight, false,
+    claimDetails, destScript, fee, false, p.timeoutBlockHeight, false,
   );
 
   const txHex = (tx as any).hex;
